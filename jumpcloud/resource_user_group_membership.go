@@ -2,6 +2,7 @@ package jumpcloud
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
@@ -100,9 +101,8 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 			return nil
 		}
 	}
-	// Element does not exist in actual Infrastructure, hence unsetting the ID
-	d.SetId("")
-	return nil
+	// Instead of unsetting the ID, return an error to let Terraform retry
+	return fmt.Errorf("User ID %s not found in group ID %s", d.Get("userid").(string), d.Get("groupid").(string))
 }
 
 func resourceUserGroupMembershipDelete(d *schema.ResourceData, m interface{}) error {
