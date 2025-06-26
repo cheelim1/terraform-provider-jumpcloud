@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"net/http"
 	"slices"
+	"strings"
+
+	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
 func resourceUserGroup() *schema.Resource {
@@ -113,6 +115,10 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 
 	group, ok, err := userGroupReadHelper(config, d.Id())
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			d.SetId("")
+			return nil
+		}
 		return err
 	}
 

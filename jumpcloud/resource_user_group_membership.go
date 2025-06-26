@@ -126,7 +126,7 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	for i := 0; i < 20; i++ { // Prevent infite loop
+	for i := 0; i < 20; i++ { // Prevent infinite loop
 
 		optionals := map[string]interface{}{
 			"groupId": d.Get("groupid").(string),
@@ -140,12 +140,8 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 			return err
 		}
 
-		// The Userids are hidden in a super-complex construct, see
-		// https://github.com/TheJumpCloud/jcapi-go/blob/master/v2/docs/GraphConnection.md
 		for _, v := range graphconnect {
 			if v.To.Id == d.Get("userid") {
-				// Found - As we not have a JC-ID for the membership we simply store
-				// the concatenation of group ID and user ID as our membership ID
 				d.SetId(d.Get("groupid").(string) + "/" + d.Get("userid").(string))
 				return nil
 			}
@@ -158,8 +154,9 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 		}
 	}
 
-	// Instead of unsetting the ID, return an error to let Terraform retry
-	return fmt.Errorf("User ID %s not found in group ID %s", d.Get("userid").(string), d.Get("groupid").(string))
+	// Unset the ID to remove the resource from the state
+	d.SetId("")
+	return nil
 }
 
 func resourceUserGroupMembershipDelete(d *schema.ResourceData, m interface{}) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
@@ -155,7 +156,7 @@ func resourceUserRead(d *schema.ResourceData, m interface{}) error {
 	// If the object does not exist in our infrastructure, we unset the ID
 	// Unfortunately, the http request returns 200 even if the resource does not exist
 	if err != nil {
-		if err.Error() == "EOF" {
+		if err.Error() == "EOF" || strings.Contains(err.Error(), "not found") {
 			d.SetId("")
 			return nil
 		}

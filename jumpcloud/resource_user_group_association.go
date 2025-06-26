@@ -99,34 +99,29 @@ func resourceUserGroupAssociationRead(d *schema.ResourceData, meta interface{}) 
 	config := meta.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	// Retrieve the group_id, object_id, and type from the resource data
 	groupID := d.Get("group_id").(string)
 	objectID := d.Get("object_id").(string)
 	objectType := d.Get("type").(string)
 
-	// Prepare optional parameters for the API call
 	optionals := map[string]interface{}{
 		"groupId": groupID,
 		"limit":   int32(100),
 	}
 
-	// Fetch associations for the group
 	graphConnect, _, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsList(
 		context.TODO(), groupID, "", "", []string{objectType}, optionals)
 	if err != nil {
 		return err
 	}
 
-	// Check if the specified association exists
 	for _, v := range graphConnect {
 		if v.To.Id == objectID {
-			// Resource exists
 			d.SetId(fmt.Sprintf("%s/%s/%s", groupID, objectID, objectType))
 			return nil
 		}
 	}
 
-	// If the association does not exist, unset ID to signal resource removal
+	// Unset the ID to remove the resource from the state
 	d.SetId("")
 	return nil
 }
