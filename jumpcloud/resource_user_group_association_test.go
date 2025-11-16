@@ -54,8 +54,14 @@ func TestAccUserGroupAssociation(t *testing.T) {
 func testUserGroupAssocConfig(randSuffix string) string {
 	return fmt.Sprintf(`
 resource "jumpcloud_application" "test_application" {
-  display_name = "test_application_%s"
-  sso_url      = "https://sso.jumpcloud.com/saml2/example-application-%s"
+  name            = "test-app-%s"
+  display_name    = "test_application_%s"
+  sso_url         = "https://sso.jumpcloud.com/saml2/example-application-%s"
+  idp_certificate = "-----BEGIN CERTIFICATE-----\nTEST_CERTIFICATE\n-----END CERTIFICATE-----"
+  idp_entity_id   = "https://test-idp.example.com"
+  idp_private_key  = "-----BEGIN PRIVATE KEY-----\nTEST_PRIVATE_KEY\n-----END PRIVATE KEY-----"
+  sp_entity_id     = "https://test-sp.example.com"
+  acs_url          = "https://test-sp.example.com/acs"
 }
 
 resource "jumpcloud_user_group" "test_group" {
@@ -67,7 +73,7 @@ resource "jumpcloud_user_group_association" "test_association" {
   group_id  = jumpcloud_user_group.test_group.id
   type      = "application"
 }
-`, randSuffix, randSuffix, randSuffix)
+`, randSuffix, randSuffix, randSuffix, randSuffix)
 }
 
 // CheckDestroy function to ensure the resource is properly destroyed.

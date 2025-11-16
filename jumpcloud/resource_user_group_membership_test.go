@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"testing"
 
+	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
 func TestAccUserGroupMembership(t *testing.T) {
@@ -14,7 +16,7 @@ func TestAccUserGroupMembership(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: nil,
+		CheckDestroy: testAccCheckUserGroupMembershipDestroy,
 		Steps: []resource.TestStep{
 			{
 				// The only reasonable step is to check if the user is in the state
@@ -45,4 +47,29 @@ func testAccUserGroupMembership(name string) string {
 			groupid = "${jumpcloud_user_group.test_group_%s.id}"
   		}
 	`, name, name, name, name, name, name, name, name)
+}
+
+func testAccCheckUserGroupMembershipDestroy(s *terraform.State) error {
+	config := testAccProvider.Meta().(*jcapiv2.Configuration)
+	client := jcapiv2.NewAPIClient(config)
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "jumpcloud_user_group_membership" {
+			continue
+		}
+
+		groupID := rs.Primary.Attributes["groupid"]
+		userID := rs.Primary.Attributes["userid"]
+
+		// Check if membership still exists
+		isMember, err := checkUserGroupMembership(client, groupID, userID)
+		if err != nil {
+			return err
+		}
+		if isMember {
+			return fmt.Errorf("user group membership still exists: group %s, user %s", groupID, userID)
+		}
+	}
+
+	return nil
 }

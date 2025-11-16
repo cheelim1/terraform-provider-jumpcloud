@@ -1,12 +1,16 @@
 package jumpcloud
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
 
+	jcapiv1 "github.com/TheJumpCloud/jcapi-go/v1"
+	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
 func TestAccUser(t *testing.T) {
@@ -15,7 +19,7 @@ func TestAccUser(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: nil,
+		CheckDestroy: testAccCheckUserDestroy,
 		Steps: []resource.TestStep{
 			{
 				// This test simply applys a user with the config from testAccUser
@@ -41,7 +45,7 @@ func TestAccUserFull(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: nil,
+		CheckDestroy: testAccCheckUserDestroy,
 		Steps: []resource.TestStep{
 			{
 				// This test simply applys a user with the config from testAccUser
@@ -101,4 +105,26 @@ func testAccUserFull(name string) string {
 			}
 		}`, name, name,
 	)
+}
+
+func testAccCheckUserDestroy(s *terraform.State) error {
+	configv1 := convertV2toV1Config(testAccProvider.Meta().(*jcapiv2.Configuration))
+	client := jcapiv1.NewAPIClient(configv1)
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "jumpcloud_user" {
+			continue
+		}
+
+		_, _, err := client.SystemusersApi.SystemusersGet(context.TODO(), rs.Primary.ID, "", "", nil)
+		if err == nil {
+			return fmt.Errorf("user still exists: %s", rs.Primary.ID)
+		}
+		// EOF error means the resource doesn't exist, which is what we want
+		if err.Error() != "EOF" {
+			return err
+		}
+	}
+
+	return nil
 }
