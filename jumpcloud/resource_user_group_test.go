@@ -12,6 +12,7 @@ import (
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -30,7 +31,7 @@ func TestAccUserGroup(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: nil,
+		CheckDestroy: testAccCheckUserGroupDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccUserGroupCreate(rName, gid, posixName),
@@ -197,4 +198,24 @@ func (s *ResourceUserGroupSuite) TestTrueUserGroupRead() {
 		s.A.Equal(c.ErrorNil, err == nil)
 		testServer.Close()
 	}
+}
+
+func testAccCheckUserGroupDestroy(s *terraform.State) error {
+	config := testAccProvider.Meta().(*jcapiv2.Configuration)
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "jumpcloud_user_group" {
+			continue
+		}
+
+		group, ok, err := userGroupReadHelper(config, rs.Primary.ID)
+		if err != nil {
+			return err
+		}
+		if ok && group != nil {
+			return fmt.Errorf("user group still exists: %s", rs.Primary.ID)
+		}
+	}
+
+	return nil
 }
