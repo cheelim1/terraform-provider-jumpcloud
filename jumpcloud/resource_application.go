@@ -158,11 +158,61 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 
 	d.SetId(res.Id)
 
+	if err := d.Set("name", res.Name); err != nil {
+		return err
+	}
+	if err := d.Set("beta", res.Beta); err != nil {
+		return err
+	}
 	if err := d.Set("display_label", res.DisplayLabel); err != nil {
+		return err
+	}
+	if err := d.Set("learn_more", res.LearnMore); err != nil {
 		return err
 	}
 	if err := d.Set("sso_url", res.SsoUrl); err != nil {
 		return err
+	}
+
+	// idp_private_key is intentionally not refreshed here: it is a write-only secret,
+	// and overwriting the configured value with whatever the API returns for it
+	// (masked or empty) would produce a permanent diff on every plan.
+	if cfg := res.Config; cfg != nil {
+		if cfg.SpEntityId != nil {
+			if err := d.Set("sp_entity_id", cfg.SpEntityId.Value); err != nil {
+				return err
+			}
+		}
+		if cfg.AcsUrl != nil {
+			if err := d.Set("acs_url", cfg.AcsUrl.Value); err != nil {
+				return err
+			}
+		}
+		if cfg.IdpEntityId != nil {
+			if err := d.Set("idp_entity_id", cfg.IdpEntityId.Value); err != nil {
+				return err
+			}
+		}
+		if cfg.IdpCertificate != nil {
+			if err := d.Set("idp_certificate", cfg.IdpCertificate.Value); err != nil {
+				return err
+			}
+		}
+		if cfg.ConstantAttributes != nil {
+			constants := make([]map[string]interface{}, 0, len(cfg.ConstantAttributes.Value))
+			for _, constant := range cfg.ConstantAttributes.Value {
+				constants = append(constants, map[string]interface{}{
+					"name":      constant.Name,
+					"value":     constant.Value,
+					"read_only": constant.ReadOnly,
+					"required":  constant.Required,
+					"visible":   constant.Visible,
+				})
+			}
+			if err := d.Set("constant_attributes", constants); err != nil {
+				return err
+			}
+		}
 	}
 
 	if res.Id != "" {
