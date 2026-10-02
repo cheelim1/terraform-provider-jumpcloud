@@ -222,7 +222,14 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 
 		metadataXml, err := GetApplicationMetadataXml(orgId, res.Id, apiKey)
 		if err != nil {
-			return err
+			// org_id is optional, but the metadata URL is scoped to an organization. Without it
+			// the fetch can fail on every refresh, so warn instead of failing Read; otherwise
+			// single-org setups could never plan, and a freshly created app would be tainted.
+			if orgId != "" {
+				return err
+			}
+			log.Printf("[WARN] skipping metadata_xml for application %s: no org_id configured and the fetch failed: %s", res.Id, err)
+			metadataXml = ""
 		}
 
 		if err := d.Set("metadata_xml", metadataXml); err != nil {
