@@ -87,10 +87,15 @@ func resourceApplication() *schema.Resource {
 				},
 			},
 			"idp_certificate": {
-				Description: "",
-				Type:        schema.TypeString,
-				Required:    true,
-				Sensitive:   true,
+				Description: "Leave unset to have JumpCloud generate and manage its own signing " +
+					"certificate -- confirmed against the live API as the correct way to use this " +
+					"resource; a self-supplied certificate is stored as an opaque string and causes " +
+					"the metadata-XML endpoint to fail with a 500 for every request. Set only if you " +
+					"specifically need to supply your own IdP keypair instead.",
+				Type:      schema.TypeString,
+				Optional:  true,
+				Computed:  true,
+				Sensitive: true,
 			},
 			"idp_entity_id": {
 				Description: "",
@@ -98,10 +103,11 @@ func resourceApplication() *schema.Resource {
 				Required:    true,
 			},
 			"idp_private_key": {
-				Description: "",
-				Type:        schema.TypeString,
-				Required:    true,
-				Sensitive:   true,
+				Description: "Leave unset -- see idp_certificate. Never refreshed by Read even if " +
+					"set: the API always returns this field empty regardless of what's stored.",
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
 			"sp_entity_id": {
 				Description: "",
@@ -284,60 +290,74 @@ func generateApplicationPayload(d *schema.ResourceData) jcapiv1.Application {
 		constant.Visible = data["visible"].(bool)
 		constants = append(constants, constant)
 	}
+	config := &jcapiv1.ApplicationConfig{
+		AcsUrl: &jcapiv1.ApplicationConfigAcsUrl{
+			Type_:    "text",
+			Label:    "ACS Url:",
+			Value:    d.Get("acs_url").(string),
+			Required: true,
+			Visible:  true,
+			ReadOnly: false,
+			Position: 4,
+		},
+		ConstantAttributes: &jcapiv1.ApplicationConfigConstantAttributes{
+			Value: constants,
+		},
+		IdpEntityId: &jcapiv1.ApplicationConfigAcsUrl{
+			Type_:    "text",
+			Label:    "IdP Entity ID:",
+			Value:    d.Get("idp_entity_id").(string),
+			Required: true,
+			Visible:  true,
+			ReadOnly: false,
+			Position: 0,
+		},
+		SpEntityId: &jcapiv1.ApplicationConfigAcsUrl{
+			Type_:    "text",
+			Label:    "SP Entity ID:",
+			Value:    d.Get("sp_entity_id").(string),
+			Required: true,
+			Visible:  true,
+			ReadOnly: false,
+			Position: 4,
+		},
+	}
+
+	// Omit idpCertificate/idpPrivateKey from the request entirely when unset,
+	// matching the shape JumpCloud's own console sends (confirmed via a captured
+	// browser request) so JumpCloud generates its own signing certificate. The
+	// SDK's ApplicationConfigAcsUrl.Value field is `json:",omitempty"`, so an
+	// empty string here would still serialize the sub-object with no "value" key
+	// at all while leaving "required":true -- confirmed live to 503 the create
+	// request. Omitting the field (nil pointer, also omitempty) avoids that.
+	if v := d.Get("idp_certificate").(string); v != "" {
+		config.IdpCertificate = &jcapiv1.ApplicationConfigAcsUrl{
+			Type_:    "file",
+			Label:    "IdP Certificate:",
+			Value:    v,
+			Required: true,
+			Visible:  true,
+			ReadOnly: false,
+			Position: 2,
+		}
+	}
+	if v := d.Get("idp_private_key").(string); v != "" {
+		config.IdpPrivateKey = &jcapiv1.ApplicationConfigAcsUrl{
+			Type_:    "file",
+			Label:    "IdP Private Key:",
+			Value:    v,
+			Required: true,
+			Visible:  true,
+			ReadOnly: false,
+			Position: 1,
+		}
+	}
+
 	return jcapiv1.Application{
 		Beta:         d.Get("beta").(bool),
 		Name:         d.Get("name").(string),
 		DisplayLabel: d.Get("display_label").(string),
 		SsoUrl:       d.Get("sso_url").(string),
-		Config: &jcapiv1.ApplicationConfig{
-			AcsUrl: &jcapiv1.ApplicationConfigAcsUrl{
-				Type_:    "text",
-				Label:    "ACS Url:",
-				Value:    d.Get("acs_url").(string),
-				Required: true,
-				Visible:  true,
-				ReadOnly: false,
-				Position: 4,
-			},
-			ConstantAttributes: &jcapiv1.ApplicationConfigConstantAttributes{
-				Value: constants,
-			},
-			IdpCertificate: &jcapiv1.ApplicationConfigAcsUrl{
-				Type_:    "file",
-				Label:    "IdP Certificate:",
-				Value:    d.Get("idp_certificate").(string),
-				Required: true,
-				Visible:  true,
-				ReadOnly: false,
-				Position: 2,
-			},
-			IdpEntityId: &jcapiv1.ApplicationConfigAcsUrl{
-				Type_:    "text",
-				Label:    "IdP Entity ID:",
-				Value:    d.Get("idp_entity_id").(string),
-				Required: true,
-				Visible:  true,
-				ReadOnly: false,
-				Position: 0,
-			},
-			IdpPrivateKey: &jcapiv1.ApplicationConfigAcsUrl{
-				Type_:    "file",
-				Label:    "IdP Private Key:",
-				Value:    d.Get("idp_private_key").(string),
-				Required: true,
-				Visible:  true,
-				ReadOnly: false,
-				Position: 1,
-			},
-			SpEntityId: &jcapiv1.ApplicationConfigAcsUrl{
-				Type_:    "text",
-				Label:    "SP Entity ID:",
-				Value:    d.Get("sp_entity_id").(string),
-				Required: true,
-				Visible:  true,
-				ReadOnly: false,
-				Position: 4,
-			},
-		},
+		Config:       config,
 	}
 }
