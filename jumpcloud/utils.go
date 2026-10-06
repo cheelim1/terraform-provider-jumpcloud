@@ -37,6 +37,13 @@ func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string
 	log.Println("Received At:", resp.ReceivedAt())
 	log.Println("Body       :\n", resp)
 
+	// Without this check any non-2xx response body -- an auth failure, a 404, an HTML
+	// error page -- is returned as if it were the metadata XML and stored in state.
+	if resp.IsError() {
+		return "", fmt.Errorf("error retrieving metadata XML for application %s: %s; body: %s",
+			applicationId, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
 	return string(resp.Body()), nil
 }
 

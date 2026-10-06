@@ -85,6 +85,8 @@ func applicationImportStep(resourceName string) resource.TestStep {
 		ResourceName:      resourceName,
 		ImportState:       true,
 		ImportStateVerify: true,
+		// idp_private_key is write-only and deliberately not refreshed by Read
+		ImportStateVerifyIgnore: []string{"idp_private_key"},
 	}
 }
 
