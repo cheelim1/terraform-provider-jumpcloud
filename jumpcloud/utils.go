@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"reflect"
 	"sort"
 	"strings"
@@ -15,13 +16,29 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
+const metadataXmlTimeout = 30 * time.Second
+
+// isNotFound reports whether an SDK call failed because the object does not exist.
+// The SDK returns the HTTP response alongside the error for non-2xx statuses; the "EOF"
+// check is kept for the empty-body responses the API has historically returned.
+func isNotFound(res *http.Response, err error) bool {
+	if err == nil {
+		return false
+	}
+	if res != nil && res.StatusCode == http.StatusNotFound {
+		return true
+	}
+	return err.Error() == "EOF"
+}
+
 // Gets an application's metadata XML for SAML authentication
 // this direct API call is a needed workaround since JumpCloud does not offer this endpoint through its SDK
 func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string) (string, error) {
 	url := "https://console.jumpcloud.com/api/organizations/" + orgId + "/applications/" + applicationId + "/metadata.xml"
 
-	// debug is always set to true, but output will only be shown if TF_LOG=DEBUG is set
-	client := resty.New().SetDebug(true)
+	// Debug logging is deliberately off: resty's debug output includes request headers,
+	// which would write the x-api-key to the TF_LOG output.
+	client := resty.New().SetTimeout(metadataXmlTimeout)
 
 	resp, err := client.R().
 		SetHeader("x-api-key", apiKey).
@@ -31,11 +48,7 @@ func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string
 		return "", err
 	}
 
-	log.Println("Status Code:", resp.StatusCode())
-	log.Println("Status     :", resp.Status())
-	log.Println("Time       :", resp.Time())
-	log.Println("Received At:", resp.ReceivedAt())
-	log.Println("Body       :\n", resp)
+	log.Printf("[DEBUG] metadata XML for application %s: status=%s time=%s", applicationId, resp.Status(), resp.Time())
 
 	// Without this check any non-2xx response body -- an auth failure, a 404, an HTML
 	// error page -- is returned as if it were the metadata XML and stored in state.

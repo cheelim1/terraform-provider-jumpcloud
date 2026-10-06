@@ -145,11 +145,12 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
 	client := jcapiv1.NewAPIClient(configv1)
 
-	res, _, err := client.ApplicationsApi.ApplicationsGet(context.TODO(), d.Id(), nil)
+	res, httpRes, err := client.ApplicationsApi.ApplicationsGet(context.TODO(), d.Id(), nil)
 
 	// If the object does not exist, unset the ID
 	if err != nil {
-		if err.Error() == "EOF" {
+		if isNotFound(httpRes, err) {
+			log.Printf("[WARN] application %s not found, removing from state", d.Id())
 			d.SetId("")
 			return nil
 		}
@@ -262,8 +263,9 @@ func resourceApplicationDelete(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
 	client := jcapiv1.NewAPIClient(configv1)
 
-	_, _, err := client.ApplicationsApi.ApplicationsDelete(context.TODO(), d.Id(), nil)
-	if err != nil {
+	_, httpRes, err := client.ApplicationsApi.ApplicationsDelete(context.TODO(), d.Id(), nil)
+	// An application that is already gone (e.g. deleted in the console) is the desired end state
+	if err != nil && !isNotFound(httpRes, err) {
 		return err
 	}
 
