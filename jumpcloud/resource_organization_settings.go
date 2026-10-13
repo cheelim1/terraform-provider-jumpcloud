@@ -39,9 +39,11 @@ func resourceOrganizationSettings() *schema.Resource {
 		},
 		Schema: map[string]*schema.Schema{
 			"org_id": {
-				Description: "The organization ID to manage. Leave unset for a " +
-					"single-org account to auto-discover it (the first, and only, " +
-					"result from GET /organizations).",
+				Description: "The organization ID to manage. When unset, the " +
+					"provider's org_id is used if configured; otherwise it is " +
+					"auto-discovered via GET /organizations, which must return " +
+					"exactly one organization (multi-org API keys must set it " +
+					"explicitly).",
 				Type:     schema.TypeString,
 				Optional: true,
 				Computed: true,
@@ -64,6 +66,12 @@ func resolveOrgId(configv1 *jcapiv1.Configuration, d *schema.ResourceData) (stri
 		return v.(string), nil
 	}
 
+	// The provider's own org_id (sent as x-org-id) is an explicit choice of
+	// organization, so prefer it over discovery.
+	if v := configv1.DefaultHeader["x-org-id"]; v != "" {
+		return v, nil
+	}
+
 	headers := configv1.DefaultHeader
 	orgs, err := OrganizationsListRaw(configv1.BasePath, headers)
 	if err != nil {
@@ -71,6 +79,12 @@ func resolveOrgId(configv1 *jcapiv1.Configuration, d *schema.ResourceData) (stri
 	}
 	if len(orgs) == 0 {
 		return "", fmt.Errorf("no organizations visible to this API key; set org_id explicitly")
+	}
+	// List order isn't an organization-selection contract, so never guess
+	// between several organizations.
+	if len(orgs) > 1 {
+		return "", fmt.Errorf("this API key can access %d organizations; set org_id explicitly "+
+			"(on this resource or the provider) to choose one", len(orgs))
 	}
 	id, _ := orgs[0]["_id"].(string)
 	if id == "" {

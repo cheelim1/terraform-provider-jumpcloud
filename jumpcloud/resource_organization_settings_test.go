@@ -90,6 +90,59 @@ func TestResourceOrganizationSettingsCreateSkipsDiscoveryWithExplicitOrgId(t *te
 	assert.Equal(t, "org2", d.Id())
 }
 
+func TestResourceOrganizationSettingsCreateUsesProviderOrgId(t *testing.T) {
+	var sawListCall bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/organizations" {
+			sawListCall = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"_id": "org3", "settings": map[string]interface{}{}})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+	config.AddDefaultHeader("x-org-id", "org3")
+
+	d := schema.TestResourceDataRaw(t, resourceOrganizationSettings().Schema, map[string]interface{}{
+		"require_admin_mfa": true,
+	})
+
+	require.NoError(t, resourceOrganizationSettingsCreate(d, config))
+	assert.False(t, sawListCall, "a provider-level org_id must be used instead of discovery")
+	assert.Equal(t, "org3", d.Id())
+}
+
+// List order isn't an organization-selection contract: discovery must refuse
+// to pick one of several organizations, and must not write anything.
+func TestResourceOrganizationSettingsCreateRejectsMultipleOrgs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/organizations" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{"_id": "org1"}, {"_id": "org2"}},
+		})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceOrganizationSettings().Schema, map[string]interface{}{
+		"require_admin_mfa": true,
+	})
+
+	err := resourceOrganizationSettingsCreate(d, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set org_id explicitly")
+	assert.Equal(t, "", d.Id())
+}
+
 func TestResourceOrganizationSettingsRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/organizations/org1", r.URL.Path)
