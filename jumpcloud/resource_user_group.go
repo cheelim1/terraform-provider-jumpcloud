@@ -1,12 +1,13 @@
 package jumpcloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"io"
 	"net/http"
 	"slices"
 )
@@ -48,6 +49,16 @@ func resourceUserGroup() *schema.Resource {
 					},
 				},
 			},
+			"custom_attributes": {
+				Type:     schema.TypeMap,
+				Optional: true,
+				Computed: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Description: "String-valued custom attributes on the group, which members inherit " +
+					"(e.g. for SSO attribute mappings). When set, this is authoritative over the " +
+					"group's string-valued custom attributes; non-string ones set in the console " +
+					"are left untouched.",
+			},
 			"members": {
 				Type:             schema.TypeList,
 				Optional:         true,
@@ -69,26 +80,27 @@ func resourceUserGroupCreate(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	body := jcapiv2.UserGroupPost{Name: d.Get("name").(string)}
-
+	// Raw request rather than the SDK: jcapi-go's UserGroupAttributes model has
+	// no room for custom attributes, which live as plain keys on "attributes".
+	attrs := map[string]interface{}{}
 	// For Attributes.PosixGroups, only the first member of the slice
 	// is considered by the JCAPI
 	if attr, ok := expandAttributes(d.Get("attributes")); ok {
-		body.Attributes = attr
+		attrs["posixGroups"] = attr.PosixGroups
 	}
+	applyCustomAttributes(attrs, nil, d.Get("custom_attributes").(map[string]interface{}))
 
-	req := map[string]interface{}{
-		"body": body,
+	body := map[string]interface{}{
+		"name":       d.Get("name").(string),
+		"attributes": attrs,
 	}
-	group, res, err := client.UserGroupsApi.GroupsUserPost(context.TODO(),
-		"", headerAccept, req)
+	group, err := userGroupRaw(config, http.MethodPost, "/usergroups", body)
 	if err != nil {
-		// TODO: sort out error essentials
-		return fmt.Errorf("error creating user group %s: %s - response = %+v",
-			(req["body"].(jcapiv2.UserGroupPost)).Name, err, res)
+		return fmt.Errorf("error creating user group %s: %s", body["name"], err)
 	}
 
-	d.SetId(group.Id)
+	id, _ := group["id"].(string)
+	d.SetId(id)
 
 	memberIds, err := userEmailsToIDs(config, d.Get("members").([]interface{}))
 	if err != nil {
@@ -127,6 +139,9 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 	if err := d.Set("attributes", flattenAttributes(&group.Attributes)); err != nil {
+		return err
+	}
+	if err := d.Set("custom_attributes", flattenCustomAttributes(group.RawAttributes)); err != nil {
 		return err
 	}
 
@@ -173,7 +188,20 @@ func userGroupReadHelper(config *jcapiv2.Configuration, id string) (ug *UserGrou
 	}
 
 	ok = true
-	err = json.NewDecoder(res.Body).Decode(&ug)
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		return
+	}
+	if err = json.Unmarshal(raw, &ug); err != nil || ug == nil {
+		return
+	}
+	// The typed decode above drops custom attributes, which jcapi-go's model
+	// doesn't know about; keep the untyped attributes object too.
+	var untyped struct {
+		Attributes map[string]interface{} `json:"attributes"`
+	}
+	err = json.Unmarshal(raw, &untyped)
+	ug.RawAttributes = untyped.Attributes
 	return
 }
 
@@ -181,23 +209,32 @@ func resourceUserGroupUpdate(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	body := jcapiv2.UserGroupPost{Name: d.Get("name").(string)}
-	if attr, ok := expandAttributes(d.Get("attributes")); ok {
-		body.Attributes = attr
-	} else {
-		return errors.New("unable to update, attributes not expandable")
+	// JumpCloud's PATCH /usergroups/{id} behaves like a PUT: confirmed live, it
+	// clears any top-level field (e.g. description) or attributes key (e.g. a
+	// custom attribute) the request omits. So start from the group's full
+	// current state and change only the fields this resource manages.
+	body, err := userGroupRaw(config, http.MethodGet, "/usergroups/"+d.Id(), nil)
+	if err != nil {
+		return fmt.Errorf("error reading user group %s before update: %s", d.Id(), err)
+	}
+	for _, k := range []string{"id", "type", "organizationObjectId", "memberQueryErrorFlags", "suggestionCounts"} {
+		delete(body, k)
 	}
 
-	req := map[string]interface{}{
-		"body": body,
+	body["name"] = d.Get("name").(string)
+
+	attrs, ok := body["attributes"].(map[string]interface{})
+	if !ok {
+		attrs = map[string]interface{}{}
+		body["attributes"] = attrs
 	}
-	// behaves like PUT, will fail if
-	// attributes.posixGroups isn't sent, see GODOC
-	_, res, err := client.UserGroupsApi.GroupsUserPatch(context.TODO(),
-		d.Id(), "", headerAccept, req)
-	if err != nil {
-		// TODO: sort out error essentials
-		return fmt.Errorf("error deleting user group:%s; response = %+v", err, res)
+	// posix_groups is ForceNew, so it never changes here; whatever the server
+	// has is carried over by the read-modify-write.
+	oldCustom, newCustom := d.GetChange("custom_attributes")
+	applyCustomAttributes(attrs, oldCustom.(map[string]interface{}), newCustom.(map[string]interface{}))
+
+	if _, err := userGroupRaw(config, http.MethodPatch, "/usergroups/"+d.Id(), body); err != nil {
+		return fmt.Errorf("error updating user group %s: %s", d.Id(), err)
 	}
 
 	oldMemberIDs, err := getUserGroupMemberIDs(client, d.Id())
@@ -245,4 +282,51 @@ func resourceUserGroupDelete(d *schema.ResourceData, m interface{}) error {
 	}
 	d.SetId("")
 	return nil
+}
+
+// userGroupRaw sends a raw JSON request to a v2 user group endpoint. Unlike
+// jcGetRaw/jcWriteRaw, it sends every configured default header -- notably
+// x-org-id, which multi-tenant organizations need and which the SDK calls this
+// replaces always sent.
+func userGroupRaw(config *jcapiv2.Configuration, method, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	var reqBody io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequest(method, config.BasePath+path, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range config.DefaultHeader {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s %s: %s; body: %s", method, path, res.Status, bytes.TrimSpace(raw))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s %s: %w", method, path, err)
+	}
+	return result, nil
 }

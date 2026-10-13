@@ -15,6 +15,12 @@ Provides a JumpCloud user group resource. Refer to the [JumpCloud API model](htt
 ```terraform
 resource "jumpcloud_user_group" "example" {
   name = "My User Group"
+
+  # Inherited by every member, e.g. for an SSO application's attribute
+  # mappings (source: Custom User Group Attribute).
+  custom_attributes = {
+    department = "Engineering"
+  }
 }
 
 output "group_id" {
@@ -32,6 +38,7 @@ output "group_id" {
 ### Optional
 
 - `attributes` (Map of String)
+- `custom_attributes` (Map of String) String-valued custom attributes on the group, which members inherit (e.g. for SSO attribute mappings). When set, this is authoritative over the group's string-valued custom attributes; non-string ones set in the console are left untouched.
 - `members` (Map of String) This is a set of user emails associated with this group
 
 ### Read-Only
