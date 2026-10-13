@@ -2,7 +2,6 @@ package jumpcloud
 
 import (
 	"errors"
-	"log"
 	"net/http"
 
 	jcapiv1 "github.com/TheJumpCloud/jcapi-go/v1"
@@ -101,11 +100,10 @@ func resourceMfaFactorRead(d *schema.ResourceData, meta interface{}) error {
 		}
 		// GET is confirmed to work for webauthn and totp (a live capture of
 		// the latter returned {"type":"totp","enabled":true,"id":"",
-		// "readOnly":false}), but not every factor_type is verified yet.
-		// Don't fail plan/apply over an unverified one -- leave the
-		// already-recorded state as the source of truth.
-		log.Printf("[WARN] skipping refresh for mfa factor %s: %s", d.Id(), err)
-		return nil
+		// "readOnly":false}). Any other failure -- auth, outage, or a
+		// factor_type the API doesn't support -- fails Read rather than
+		// leaving stale state looking freshly refreshed.
+		return err
 	}
 
 	if err := d.Set("factor_type", d.Id()); err != nil {

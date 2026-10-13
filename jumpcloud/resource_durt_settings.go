@@ -46,19 +46,19 @@ func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
 	headers := config.DefaultHeader
 
 	// readOnly is server-controlled, never user-set -- preserve whatever the
-	// API last reported rather than guessing a value for it.
-	readOnly := false
-	if current, err := jcGetRaw(config.BasePath, headers, "/durt/settings"); err == nil {
-		if v, ok := current["readOnly"].(bool); ok {
-			readOnly = v
-		}
+	// API reports rather than guessing a value for it. If the GET fails, abort
+	// instead of writing a guessed readOnly back.
+	current, err := jcGetRaw(config.BasePath, headers, "/durt/settings")
+	if err != nil {
+		return err
 	}
+	readOnly, _ := current["readOnly"].(bool)
 
 	body := map[string]interface{}{
 		"enabled":  enabled,
 		"readOnly": readOnly,
 	}
-	_, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/durt/settings", body)
+	_, err = jcWriteRaw(http.MethodPut, config.BasePath, headers, "/durt/settings", body)
 	return err
 }
 

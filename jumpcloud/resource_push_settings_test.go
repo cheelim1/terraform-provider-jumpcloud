@@ -110,3 +110,62 @@ func TestResourcePushSettingsDeleteDoesNotWrite(t *testing.T) {
 	require.NoError(t, resourcePushSettingsDelete(d, config))
 	assert.Equal(t, "", d.Id())
 }
+
+// If the prerequisite GET fails, the write must abort rather than PUT a full
+// object with guessed server-controlled fields.
+func TestResourcePushSettingsWriteAbortsOnGetError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("must not write after a failed GET, got: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourcePushSettings().Schema, map[string]interface{}{
+		"config_id": "pcfg1",
+	})
+
+	err := resourcePushSettingsCreateUpdate(d, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+}
+
+// Fields this resource doesn't manage must survive the full-object PUT.
+func TestResourcePushSettingsWritePreservesUnmanagedFields(t *testing.T) {
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":              "pcfg1",
+				"readOnly":        false,
+				"someNewField":    "keep-me",
+				"concurrentLimit": map[string]interface{}{"enabled": false, "max": float64(9), "window": float64(30)},
+			})
+		case http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(gotBody)
+		}
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourcePushSettings().Schema, map[string]interface{}{
+		"config_id":            "pcfg1",
+		"concurrent_limit_max": 3,
+	})
+
+	require.NoError(t, resourcePushSettingsCreateUpdate(d, config))
+	assert.Equal(t, "keep-me", gotBody["someNewField"])
+	assert.Equal(t, map[string]interface{}{"enabled": true, "max": float64(3), "window": float64(30)}, gotBody["concurrentLimit"])
+}

@@ -97,3 +97,28 @@ func TestResourceDurtSettingsDeleteDisables(t *testing.T) {
 	assert.Equal(t, "", d.Id())
 	assert.Equal(t, 2, requestCount, "Delete must GET to preserve readOnly, then PUT")
 }
+
+// If the prerequisite GET fails, the write must abort rather than PUT a
+// guessed readOnly over the server-controlled value.
+func TestResourceDurtSettingsWriteAbortsOnGetError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("must not write after a failed GET, got: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceDurtSettings().Schema, map[string]interface{}{
+		"enabled": true,
+	})
+
+	err := resourceDurtSettingsCreateUpdate(d, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+}

@@ -115,26 +115,25 @@ func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) 
 		return err
 	}
 
-	// readOnly is server-controlled, never user-set -- preserve whatever the
-	// API last reported rather than guessing a value for it.
-	readOnly := false
-	if current, err := jcGetRaw(config.BasePath, headers, "/push/configs/"+configId); err == nil {
-		if v, ok := current["readOnly"].(bool); ok {
-			readOnly = v
-		}
+	// The PUT needs the full object back, including server-controlled fields
+	// like readOnly, so overlay the managed fields onto the current object. If
+	// the GET fails, abort instead of writing guessed values for those fields.
+	body, err := jcGetRaw(config.BasePath, headers, "/push/configs/"+configId)
+	if err != nil {
+		return err
 	}
+	body["id"] = configId
+	body["userVerification"] = d.Get("user_verification").(string)
+	body["isTotpIntegrated"] = d.Get("is_totp_integrated").(bool)
+	body["exclusionGroups"] = stringSliceFromInterfaceList(d.Get("exclusion_groups").([]interface{}))
+	limit, ok := body["concurrentLimit"].(map[string]interface{})
+	if !ok {
+		limit = map[string]interface{}{}
+		body["concurrentLimit"] = limit
+	}
+	limit["enabled"] = d.Get("concurrent_limit_enabled").(bool)
+	limit["max"] = d.Get("concurrent_limit_max").(int)
 
-	body := map[string]interface{}{
-		"id":               configId,
-		"userVerification": d.Get("user_verification").(string),
-		"isTotpIntegrated": d.Get("is_totp_integrated").(bool),
-		"exclusionGroups":  stringSliceFromInterfaceList(d.Get("exclusion_groups").([]interface{})),
-		"readOnly":         readOnly,
-		"concurrentLimit": map[string]interface{}{
-			"enabled": d.Get("concurrent_limit_enabled").(bool),
-			"max":     d.Get("concurrent_limit_max").(int),
-		},
-	}
 	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/push/configs/"+configId, body); err != nil {
 		return err
 	}
