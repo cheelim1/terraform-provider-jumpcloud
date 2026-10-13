@@ -110,6 +110,21 @@ func TestResourceAuthenticationPolicyCreateRejectsInvalidConditionsJSON(t *testi
 	assert.Contains(t, err.Error(), "conditions_json is not valid JSON")
 }
 
+// Read stores a compact re-encoding of the API's conditions, so formatted
+// but semantically identical config must not produce a perpetual diff.
+func TestResourceAuthenticationPolicyConditionsJSONDiffIsSemantic(t *testing.T) {
+	s := resourceAuthenticationPolicy().Schema["conditions_json"]
+	require.NotNil(t, s.DiffSuppressFunc)
+	assert.True(t, s.DiffSuppressFunc("conditions_json", `{"foo":true}`, "{ \"foo\": true }\n", nil))
+	assert.False(t, s.DiffSuppressFunc("conditions_json", `{"foo":true}`, `{"foo":false}`, nil))
+
+	require.NotNil(t, s.ValidateFunc)
+	_, errs := s.ValidateFunc("{not valid json", "conditions_json")
+	assert.NotEmpty(t, errs, "invalid JSON must be rejected at plan time")
+	_, errs = s.ValidateFunc(`{"foo": true}`, "conditions_json")
+	assert.Empty(t, errs)
+}
+
 // Regression test for the PATCH-vs-PUT bug: Update must GET the current
 // object (read-modify-write, preserving fields this resource doesn't manage)
 // and then PATCH, not PUT -- a live PUT 404'd on an id that GET succeeded on.

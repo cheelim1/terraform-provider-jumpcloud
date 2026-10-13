@@ -7,6 +7,8 @@ import (
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/structure"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
 
 // resourceAuthenticationPolicy manages a JumpCloud authentication policy
@@ -74,9 +76,14 @@ func resourceAuthenticationPolicy() *schema.Resource {
 					"No typed schema is exposed for this -- confirmed via a " +
 					"captured browser request to be an object ({} for no " +
 					"conditions), but its shape beyond that isn't confirmed.",
-				Type:     schema.TypeString,
-				Optional: true,
-				Default:  "{}",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "{}",
+				ValidateFunc: validation.StringIsJSON,
+				// Read stores the API's compact re-encoding, so compare
+				// semantically rather than textually to avoid perpetual diffs
+				// on formatted input.
+				DiffSuppressFunc: structure.SuppressJsonDiff,
 			},
 			"effect_action": {
 				Description: "The base access decision when this policy applies: " +
