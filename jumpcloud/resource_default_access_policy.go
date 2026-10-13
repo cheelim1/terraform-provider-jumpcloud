@@ -76,7 +76,7 @@ func resourceDefaultAccessPolicy() *schema.Resource {
 }
 
 func defaultAccessPolicyWrite(config *jcapiv2.Configuration, resourceType string, d *schema.ResourceData) error {
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 	body := map[string]interface{}{
 		"effect": map[string]interface{}{
 			"action": d.Get("effect_action").(string),
@@ -90,7 +90,7 @@ func defaultAccessPolicyWrite(config *jcapiv2.Configuration, resourceType string
 			},
 		},
 	}
-	_, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/authn/policy/fallback/"+resourceType, body)
+	_, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/authn/policy/fallback/"+resourceType, body)
 	return err
 }
 
@@ -107,9 +107,9 @@ func resourceDefaultAccessPolicyCreateUpdate(d *schema.ResourceData, meta interf
 
 func resourceDefaultAccessPolicyRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
-	raw, err := jcGetRaw(config.BasePath, apiKey, "/authn/policy/fallback/"+d.Id())
+	raw, err := jcGetRaw(config.BasePath, headers, "/authn/policy/fallback/"+d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			d.SetId("")
@@ -164,8 +164,8 @@ func resourceDefaultAccessPolicyDelete(d *schema.ResourceData, meta interface{})
 			},
 		},
 	}
-	apiKey := config.DefaultHeader["x-api-key"]
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/authn/policy/fallback/"+resourceType, body); err != nil {
+	headers := config.DefaultHeader
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/authn/policy/fallback/"+resourceType, body); err != nil {
 		return err
 	}
 	d.SetId("")

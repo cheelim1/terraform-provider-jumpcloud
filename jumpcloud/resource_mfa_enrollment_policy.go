@@ -70,13 +70,13 @@ func resourceMfaEnrollmentPolicy() *schema.Resource {
 }
 
 func mfaEnrollmentPolicyWrite(config *jcapiv2.Configuration, d *schema.ResourceData) error {
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 	body := map[string]interface{}{
 		"requirePrimaryFactor": d.Get("require_primary_factor").(bool),
 		"gracePeriodDays":      d.Get("grace_period_days").(int),
 		"requireBackupFactor":  d.Get("require_backup_factor").(bool),
 	}
-	_, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/mfa/enrollmentPolicy", body)
+	_, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/mfa/enrollmentPolicy", body)
 	return err
 }
 
@@ -91,9 +91,9 @@ func resourceMfaEnrollmentPolicyCreateUpdate(d *schema.ResourceData, meta interf
 
 func resourceMfaEnrollmentPolicyRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
-	raw, err := jcGetRaw(config.BasePath, apiKey, "/mfa/enrollmentPolicy")
+	raw, err := jcGetRaw(config.BasePath, headers, "/mfa/enrollmentPolicy")
 	if err != nil {
 		return err
 	}
@@ -119,14 +119,14 @@ func resourceMfaEnrollmentPolicyRead(d *schema.ResourceData, meta interface{}) e
 
 func resourceMfaEnrollmentPolicyDelete(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
 	body := map[string]interface{}{
 		"requirePrimaryFactor": false,
 		"gracePeriodDays":      0,
 		"requireBackupFactor":  false,
 	}
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/mfa/enrollmentPolicy", body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/mfa/enrollmentPolicy", body); err != nil {
 		return err
 	}
 	d.SetId("")

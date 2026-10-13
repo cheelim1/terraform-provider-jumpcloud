@@ -64,8 +64,8 @@ func resolveOrgId(configv1 *jcapiv1.Configuration, d *schema.ResourceData) (stri
 		return v.(string), nil
 	}
 
-	apiKey := configv1.DefaultHeader["x-api-key"]
-	orgs, err := OrganizationsListRaw(configv1.BasePath, apiKey)
+	headers := configv1.DefaultHeader
+	orgs, err := OrganizationsListRaw(configv1.BasePath, headers)
 	if err != nil {
 		return "", err
 	}
@@ -84,19 +84,19 @@ func resolveOrgId(configv1 *jcapiv1.Configuration, d *schema.ResourceData) (stri
 
 func resourceOrganizationSettingsCreate(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
+	headers := configv1.DefaultHeader
 
 	orgId, err := resolveOrgId(configv1, d)
 	if err != nil {
 		return err
 	}
 
-	current, err := OrganizationGetRaw(configv1.BasePath, apiKey, orgId)
+	current, err := OrganizationGetRaw(configv1.BasePath, headers, orgId)
 	if err != nil {
 		return err
 	}
 	applyManagedOrgSettings(current, d)
-	if _, err := OrganizationUpdateRaw(configv1.BasePath, apiKey, orgId, current); err != nil {
+	if _, err := OrganizationUpdateRaw(configv1.BasePath, headers, orgId, current); err != nil {
 		return err
 	}
 
@@ -106,9 +106,9 @@ func resourceOrganizationSettingsCreate(d *schema.ResourceData, meta interface{}
 
 func resourceOrganizationSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
+	headers := configv1.DefaultHeader
 
-	raw, err := OrganizationGetRaw(configv1.BasePath, apiKey, d.Id())
+	raw, err := OrganizationGetRaw(configv1.BasePath, headers, d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			d.SetId("")
@@ -132,14 +132,14 @@ func resourceOrganizationSettingsRead(d *schema.ResourceData, meta interface{}) 
 
 func resourceOrganizationSettingsUpdate(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
+	headers := configv1.DefaultHeader
 
-	current, err := OrganizationGetRaw(configv1.BasePath, apiKey, d.Id())
+	current, err := OrganizationGetRaw(configv1.BasePath, headers, d.Id())
 	if err != nil {
 		return err
 	}
 	applyManagedOrgSettings(current, d)
-	if _, err := OrganizationUpdateRaw(configv1.BasePath, apiKey, d.Id(), current); err != nil {
+	if _, err := OrganizationUpdateRaw(configv1.BasePath, headers, d.Id(), current); err != nil {
 		return err
 	}
 	return resourceOrganizationSettingsRead(d, meta)
@@ -147,9 +147,9 @@ func resourceOrganizationSettingsUpdate(d *schema.ResourceData, meta interface{}
 
 func resourceOrganizationSettingsDelete(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
+	headers := configv1.DefaultHeader
 
-	current, err := OrganizationGetRaw(configv1.BasePath, apiKey, d.Id())
+	current, err := OrganizationGetRaw(configv1.BasePath, headers, d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			d.SetId("")
@@ -165,7 +165,7 @@ func resourceOrganizationSettingsDelete(d *schema.ResourceData, meta interface{}
 	}
 	settings["requireAdminMFA"] = false
 
-	if _, err := OrganizationUpdateRaw(configv1.BasePath, apiKey, d.Id(), current); err != nil {
+	if _, err := OrganizationUpdateRaw(configv1.BasePath, headers, d.Id(), current); err != nil {
 		return err
 	}
 

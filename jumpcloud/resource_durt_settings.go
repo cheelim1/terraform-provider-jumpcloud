@@ -43,12 +43,12 @@ func resourceDurtSettings() *schema.Resource {
 }
 
 func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
 	// readOnly is server-controlled, never user-set -- preserve whatever the
 	// API last reported rather than guessing a value for it.
 	readOnly := false
-	if current, err := jcGetRaw(config.BasePath, apiKey, "/durt/settings"); err == nil {
+	if current, err := jcGetRaw(config.BasePath, headers, "/durt/settings"); err == nil {
 		if v, ok := current["readOnly"].(bool); ok {
 			readOnly = v
 		}
@@ -58,7 +58,7 @@ func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
 		"enabled":  enabled,
 		"readOnly": readOnly,
 	}
-	_, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/durt/settings", body)
+	_, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/durt/settings", body)
 	return err
 }
 
@@ -73,9 +73,9 @@ func resourceDurtSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) 
 
 func resourceDurtSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
-	raw, err := jcGetRaw(config.BasePath, apiKey, "/durt/settings")
+	raw, err := jcGetRaw(config.BasePath, headers, "/durt/settings")
 	if err != nil {
 		return err
 	}

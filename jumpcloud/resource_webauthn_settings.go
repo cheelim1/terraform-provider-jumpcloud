@@ -60,8 +60,8 @@ func resolveWebauthnConfigId(config *jcapiv2.Configuration, d *schema.ResourceDa
 		return v.(string), nil
 	}
 
-	apiKey := config.DefaultHeader["x-api-key"]
-	configs, err := jcListArrayRaw(config.BasePath, apiKey, "/webauthn/configs")
+	headers := config.DefaultHeader
+	configs, err := jcListArrayRaw(config.BasePath, headers, "/webauthn/configs")
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +80,7 @@ func resolveWebauthnConfigId(config *jcapiv2.Configuration, d *schema.ResourceDa
 
 func resourceWebauthnSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
 	configId, err := resolveWebauthnConfigId(config, d)
 	if err != nil {
@@ -90,7 +90,7 @@ func resourceWebauthnSettingsCreateUpdate(d *schema.ResourceData, meta interface
 	body := map[string]interface{}{
 		"allowSelfRegistration": d.Get("allow_self_registration").(bool),
 	}
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/webauthn/configs/"+configId, body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/webauthn/configs/"+configId, body); err != nil {
 		return err
 	}
 
@@ -100,9 +100,9 @@ func resourceWebauthnSettingsCreateUpdate(d *schema.ResourceData, meta interface
 
 func resourceWebauthnSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
-	raw, err := jcGetRaw(config.BasePath, apiKey, "/webauthn/configs/"+d.Id())
+	raw, err := jcGetRaw(config.BasePath, headers, "/webauthn/configs/"+d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			d.SetId("")
@@ -124,10 +124,10 @@ func resourceWebauthnSettingsRead(d *schema.ResourceData, meta interface{}) erro
 
 func resourceWebauthnSettingsDelete(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
 	body := map[string]interface{}{"allowSelfRegistration": false}
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/webauthn/configs/"+d.Id(), body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/webauthn/configs/"+d.Id(), body); err != nil {
 		return err
 	}
 	d.SetId("")

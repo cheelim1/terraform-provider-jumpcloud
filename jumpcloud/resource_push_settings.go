@@ -88,8 +88,8 @@ func resolvePushConfigId(config *jcapiv2.Configuration, d *schema.ResourceData) 
 		return v.(string), nil
 	}
 
-	apiKey := config.DefaultHeader["x-api-key"]
-	configs, err := jcListArrayRaw(config.BasePath, apiKey, "/push/configs")
+	headers := config.DefaultHeader
+	configs, err := jcListArrayRaw(config.BasePath, headers, "/push/configs")
 	if err != nil {
 		return "", err
 	}
@@ -108,7 +108,7 @@ func resolvePushConfigId(config *jcapiv2.Configuration, d *schema.ResourceData) 
 
 func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
 	configId, err := resolvePushConfigId(config, d)
 	if err != nil {
@@ -118,7 +118,7 @@ func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) 
 	// readOnly is server-controlled, never user-set -- preserve whatever the
 	// API last reported rather than guessing a value for it.
 	readOnly := false
-	if current, err := jcGetRaw(config.BasePath, apiKey, "/push/configs/"+configId); err == nil {
+	if current, err := jcGetRaw(config.BasePath, headers, "/push/configs/"+configId); err == nil {
 		if v, ok := current["readOnly"].(bool); ok {
 			readOnly = v
 		}
@@ -135,7 +135,7 @@ func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) 
 			"max":     d.Get("concurrent_limit_max").(int),
 		},
 	}
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, apiKey, "/push/configs/"+configId, body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/push/configs/"+configId, body); err != nil {
 		return err
 	}
 
@@ -145,9 +145,9 @@ func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) 
 
 func resourcePushSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	apiKey := config.DefaultHeader["x-api-key"]
+	headers := config.DefaultHeader
 
-	raw, err := jcGetRaw(config.BasePath, apiKey, "/push/configs/"+d.Id())
+	raw, err := jcGetRaw(config.BasePath, headers, "/push/configs/"+d.Id())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			d.SetId("")
