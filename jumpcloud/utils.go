@@ -22,6 +22,21 @@ import (
 // has been deleted outside Terraform.
 var ErrApplicationNotFound = errors.New("application not found")
 
+// jcRawRequest builds a request for the raw helpers below, carrying the
+// provider configuration's default headers (x-api-key and, when configured,
+// x-org-id) so raw calls are scoped to the same organization as SDK calls.
+// Debug logging is deliberately off: resty's debug output includes request
+// headers, which would write the x-api-key to the TF_LOG output.
+func jcRawRequest(headers map[string]string) *resty.Request {
+	req := resty.New().R().SetHeader("Accept", "application/json")
+	for k, v := range headers {
+		if v != "" {
+			req.SetHeader(k, v)
+		}
+	}
+	return req
+}
+
 // ApplicationGetRaw fetches the full, raw JSON representation of an application.
 // Needed because jcapiv1.ApplicationConfig only models a small subset of the real
 // config object -- confirmed via a captured browser request, which showed fields
@@ -29,12 +44,8 @@ var ErrApplicationNotFound = errors.New("application not found")
 // includeGroups, groupsAttributeName, and more) that don't exist anywhere in the
 // generated SDK types, so client.ApplicationsApi.ApplicationsGet silently drops
 // them when unmarshaling into the typed struct.
-func ApplicationGetRaw(basePath, apiKey, applicationId string) (map[string]interface{}, error) {
-	client := resty.New().SetDebug(true)
-	resp, err := client.R().
-		SetHeader("x-api-key", apiKey).
-		SetHeader("Accept", "application/json").
-		Get(basePath + "/applications/" + applicationId)
+func ApplicationGetRaw(basePath string, headers map[string]string, applicationId string) (map[string]interface{}, error) {
+	resp, err := jcRawRequest(headers).Get(basePath + "/applications/" + applicationId)
 	if err != nil {
 		return nil, err
 	}
@@ -57,12 +68,9 @@ func ApplicationGetRaw(basePath, apiKey, applicationId string) (map[string]inter
 // applicationWriteRaw POSTs or PUTs a raw application body, for the same reason
 // ApplicationGetRaw bypasses the generated client: the typed Application/
 // ApplicationConfig structs can't represent the fields this resource now manages.
-func applicationWriteRaw(method, basePath, apiKey, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	client := resty.New().SetDebug(true)
-	req := client.R().
-		SetHeader("x-api-key", apiKey).
+func applicationWriteRaw(method, basePath string, headers map[string]string, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	req := jcRawRequest(headers).
 		SetHeader("Content-Type", "application/json").
-		SetHeader("Accept", "application/json").
 		SetBody(body)
 
 	var resp *resty.Response
@@ -91,13 +99,13 @@ func applicationWriteRaw(method, basePath, apiKey, path string, body map[string]
 }
 
 // ApplicationCreateRaw creates an application from a raw request body.
-func ApplicationCreateRaw(basePath, apiKey string, body map[string]interface{}) (map[string]interface{}, error) {
-	return applicationWriteRaw(http.MethodPost, basePath, apiKey, "/applications", body)
+func ApplicationCreateRaw(basePath string, headers map[string]string, body map[string]interface{}) (map[string]interface{}, error) {
+	return applicationWriteRaw(http.MethodPost, basePath, headers, "/applications", body)
 }
 
 // ApplicationUpdateRaw updates an application from a raw request body.
-func ApplicationUpdateRaw(basePath, apiKey, applicationId string, body map[string]interface{}) (map[string]interface{}, error) {
-	return applicationWriteRaw(http.MethodPut, basePath, apiKey, "/applications/"+applicationId, body)
+func ApplicationUpdateRaw(basePath string, headers map[string]string, applicationId string, body map[string]interface{}) (map[string]interface{}, error) {
+	return applicationWriteRaw(http.MethodPut, basePath, headers, "/applications/"+applicationId, body)
 }
 
 const metadataXmlTimeout = 30 * time.Second

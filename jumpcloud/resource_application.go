@@ -197,12 +197,11 @@ func resourceApplication() *schema.Resource {
 
 func resourceApplicationCreate(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
 
 	body := buildApplicationRequestBody(nil, d)
 	log.Println("[INFO] body=", body)
 
-	result, err := ApplicationCreateRaw(configv1.BasePath, apiKey, body)
+	result, err := ApplicationCreateRaw(configv1.BasePath, configv1.DefaultHeader, body)
 	if err != nil {
 		return err
 	}
@@ -217,7 +216,7 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
 	apiKey := configv1.DefaultHeader["x-api-key"]
 
-	raw, err := ApplicationGetRaw(configv1.BasePath, apiKey, d.Id())
+	raw, err := ApplicationGetRaw(configv1.BasePath, configv1.DefaultHeader, d.Id())
 	if err != nil {
 		if errors.Is(err, ErrApplicationNotFound) {
 			log.Printf("[WARN] application %s not found, removing from state", d.Id())
@@ -346,7 +345,6 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 
 func resourceApplicationUpdate(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
-	apiKey := configv1.DefaultHeader["x-api-key"]
 
 	// Read-modify-write: start from the application's current full server-side state
 	// (not just the fields this provider manages) and mutate only the managed fields
@@ -355,13 +353,13 @@ func resourceApplicationUpdate(d *schema.ResourceData, meta interface{}) error {
 	// authClaimConfiguration, and more -- confirmed via a captured browser request).
 	// The console itself always does a full read-modify-write on save; sending a
 	// fresh, partial body on update risks silently resetting those unmanaged fields.
-	current, err := ApplicationGetRaw(configv1.BasePath, apiKey, d.Id())
+	current, err := ApplicationGetRaw(configv1.BasePath, configv1.DefaultHeader, d.Id())
 	if err != nil {
 		return err
 	}
 
 	body := buildApplicationRequestBody(current, d)
-	if _, err := ApplicationUpdateRaw(configv1.BasePath, apiKey, d.Id(), body); err != nil {
+	if _, err := ApplicationUpdateRaw(configv1.BasePath, configv1.DefaultHeader, d.Id(), body); err != nil {
 		return err
 	}
 	return resourceApplicationRead(d, meta)
