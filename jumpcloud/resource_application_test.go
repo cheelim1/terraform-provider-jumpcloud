@@ -99,12 +99,11 @@ func testAccCheckApplicationDestroy(s *terraform.State) error {
 			continue
 		}
 
-		_, _, err := client.ApplicationsApi.ApplicationsGet(context.TODO(), rs.Primary.ID, nil)
+		_, httpRes, err := client.ApplicationsApi.ApplicationsGet(context.TODO(), rs.Primary.ID, nil)
 		if err == nil {
 			return fmt.Errorf("application still exists: %s", rs.Primary.ID)
 		}
-		// EOF error means the resource doesn't exist, which is what we want
-		if err.Error() != "EOF" {
+		if !isNotFound(httpRes, err) {
 			return err
 		}
 	}
