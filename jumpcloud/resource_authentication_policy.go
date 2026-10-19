@@ -355,42 +355,49 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	for _, f := range d.Get("mfa_factors").([]interface{}) {
 		mfaFactors = append(mfaFactors, map[string]interface{}{"type": f.(string)})
 	}
-	body["effect"] = map[string]interface{}{
-		"action": d.Get("effect_action").(string),
-		"obligations": map[string]interface{}{
-			"mfa": map[string]interface{}{
-				"required": d.Get("mfa_required").(bool),
-			},
-			"userVerification": map[string]interface{}{
-				"requirement": d.Get("user_verification_requirement").(string),
-			},
-			"mfaFactors":             mfaFactors,
-			"mfaFactorSelectionMode": d.Get("mfa_factor_selection_mode").(string),
-		},
-	}
+	// Merge the managed fields into whatever the policy already has, rather
+	// than rebuilding these objects, so fields this resource doesn't expose
+	// (userGroups selectors, users.exclusions, ...) survive an update.
+	effect := subMap(body, "effect")
+	effect["action"] = d.Get("effect_action").(string)
+	obligations := subMap(effect, "obligations")
+	subMap(obligations, "mfa")["required"] = d.Get("mfa_required").(bool)
+	subMap(obligations, "userVerification")["requirement"] = d.Get("user_verification_requirement").(string)
+	obligations["mfaFactors"] = mfaFactors
+	obligations["mfaFactorSelectionMode"] = d.Get("mfa_factor_selection_mode").(string)
 
 	resourceTypes := d.Get("target_resource_types").([]interface{})
 	resources := make([]map[string]interface{}, 0, len(resourceTypes))
 	for _, t := range resourceTypes {
 		resources = append(resources, map[string]interface{}{"type": t.(string)})
 	}
-	body["targets"] = map[string]interface{}{
-		"resources": resources,
-		"users": map[string]interface{}{
-			"inclusions": stringSliceFromInterfaceList(d.Get("target_user_inclusions").([]interface{})),
-		},
-		"excludedApplications": stringSliceFromInterfaceList(d.Get("target_excluded_applications").([]interface{})),
-		// userGroups isn't exposed as a managed field yet (nothing has asked
-		// for group-scoped policies) -- confirmed present on the real object
-		// via a captured PATCH, so it's included empty here rather than
-		// omitted, matching the real schema as closely as possible.
-		"userGroups": map[string]interface{}{
-			"inclusions": []string{},
-			"exclusions": []string{},
-		},
+	targets := subMap(body, "targets")
+	targets["resources"] = resources
+	subMap(targets, "users")["inclusions"] = stringSliceFromInterfaceList(d.Get("target_user_inclusions").([]interface{}))
+	targets["excludedApplications"] = stringSliceFromInterfaceList(d.Get("target_excluded_applications").([]interface{}))
+	// userGroups isn't a managed field. Preserve whatever the policy has; only
+	// when it's absent, send it empty, matching the real schema as closely as
+	// possible (confirmed present on the real object via a captured PATCH).
+	userGroups := subMap(targets, "userGroups")
+	if _, ok := userGroups["inclusions"]; !ok {
+		userGroups["inclusions"] = []string{}
+	}
+	if _, ok := userGroups["exclusions"]; !ok {
+		userGroups["exclusions"] = []string{}
 	}
 
 	return body, nil
+}
+
+// subMap returns m[key] as a map, creating (and storing) an empty one when it
+// is absent or not an object, so callers can set managed fields on it in place.
+func subMap(m map[string]interface{}, key string) map[string]interface{} {
+	if sub, ok := m[key].(map[string]interface{}); ok {
+		return sub
+	}
+	sub := map[string]interface{}{}
+	m[key] = sub
+	return sub
 }
 
 // stringSliceFromInterfaceList converts a Terraform TypeList of strings

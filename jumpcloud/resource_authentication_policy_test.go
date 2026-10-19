@@ -166,6 +166,86 @@ func TestResourceAuthenticationPolicyUpdateUsesPatchAndPreservesUnmanagedFields(
 		"read-modify-write must preserve server fields this resource doesn't manage")
 }
 
+// A name-only update to an imported or console-edited policy must not change
+// who is subject to it: group selectors, user exclusions, and other target and
+// effect fields this resource doesn't manage have to survive the PATCH.
+func TestResourceAuthenticationPolicyUpdatePreservesUnmanagedTargetsAndEffect(t *testing.T) {
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "policy1",
+				"effect": map[string]interface{}{
+					"action":       "allow",
+					"unmanagedKey": "keep-effect",
+					"obligations": map[string]interface{}{
+						"mfa":                 map[string]interface{}{"required": false, "unmanagedMfa": "keep-mfa"},
+						"unmanagedObligation": "keep-obligation",
+					},
+				},
+				"targets": map[string]interface{}{
+					"unmanagedTarget": "keep-target",
+					"users": map[string]interface{}{
+						"inclusions": []interface{}{"all"},
+						"exclusions": []interface{}{"user-excluded"},
+					},
+					"userGroups": map[string]interface{}{
+						"inclusions": []interface{}{"group-in"},
+						"exclusions": []interface{}{"group-out"},
+					},
+				},
+			})
+		case http.MethodPatch:
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(gotBody)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	values := authPolicySchemaFixture()
+	values["name"] = "Renamed policy"
+	d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, values)
+	d.SetId("policy1")
+
+	require.NoError(t, resourceAuthenticationPolicyUpdate(d, config))
+
+	targets := gotBody["targets"].(map[string]interface{})
+	assert.Equal(t, "keep-target", targets["unmanagedTarget"])
+	assert.Equal(t, []interface{}{"group-in"}, targets["userGroups"].(map[string]interface{})["inclusions"])
+	assert.Equal(t, []interface{}{"group-out"}, targets["userGroups"].(map[string]interface{})["exclusions"])
+	users := targets["users"].(map[string]interface{})
+	assert.Equal(t, []interface{}{"user-excluded"}, users["exclusions"], "users.exclusions must survive")
+	assert.Equal(t, []interface{}{"all"}, users["inclusions"], "managed inclusions still come from config")
+
+	effect := gotBody["effect"].(map[string]interface{})
+	assert.Equal(t, "keep-effect", effect["unmanagedKey"])
+	obligations := effect["obligations"].(map[string]interface{})
+	assert.Equal(t, "keep-obligation", obligations["unmanagedObligation"])
+	mfa := obligations["mfa"].(map[string]interface{})
+	assert.Equal(t, "keep-mfa", mfa["unmanagedMfa"])
+	assert.Equal(t, true, mfa["required"], "managed fields are still applied from config")
+	assert.Equal(t, "Renamed policy", gotBody["name"])
+}
+
+// With no existing policy (Create), userGroups is still sent empty, matching
+// the real schema.
+func TestResourceAuthenticationPolicyCreateDefaultsEmptyUserGroups(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, authPolicySchemaFixture())
+	body, err := buildAuthPolicyRequestBody(nil, d)
+	require.NoError(t, err)
+	groups := body["targets"].(map[string]interface{})["userGroups"].(map[string]interface{})
+	assert.Equal(t, []string{}, groups["inclusions"])
+	assert.Equal(t, []string{}, groups["exclusions"])
+}
+
 func TestResourceAuthenticationPolicyRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/authn/policies/policy1", r.URL.Path)
