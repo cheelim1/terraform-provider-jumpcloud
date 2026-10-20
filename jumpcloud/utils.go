@@ -20,6 +20,12 @@ import (
 
 const metadataXmlTimeout = 30 * time.Second
 
+// rawRequestTimeout bounds every request made through jcRawRequest. The raw
+// helpers take no cancellation context, so without a timeout a server that
+// accepts the connection but stalls would leave refresh/apply waiting forever
+// while Terraform holds its state lock. A var so tests can shorten it.
+var rawRequestTimeout = 30 * time.Second
+
 // isNotFound reports whether an SDK call failed because the object does not exist.
 // The SDK returns the HTTP response alongside the error for non-2xx statuses; the "EOF"
 // check is kept for the empty-body responses the API has historically returned.
@@ -43,7 +49,7 @@ var ErrNotFound = errors.New("not found")
 // Debug logging is deliberately off: resty's debug output includes request
 // headers, which would write the x-api-key to the TF_LOG output.
 func jcRawRequest(headers map[string]string) *resty.Request {
-	req := resty.New().R().SetHeader("Accept", "application/json")
+	req := resty.New().SetTimeout(rawRequestTimeout).R().SetHeader("Accept", "application/json")
 	for k, v := range headers {
 		if v != "" {
 			req.SetHeader(k, v)

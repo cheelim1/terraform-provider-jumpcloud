@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,31 @@ func TestJcRawHelpersOmitUnsetOrgHeader(t *testing.T) {
 
 	_, err := jcGetRaw(server.URL, map[string]string{"x-api-key": "test-key", "x-org-id": ""}, "/widgets/abc")
 	require.NoError(t, err)
+}
+
+// A server that accepts the connection but never answers must not hang the
+// raw helpers (and with them refresh/apply, while Terraform holds its lock).
+func TestJcRawHelpersTimeOutOnStalledServer(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	orig := rawRequestTimeout
+	rawRequestTimeout = 100 * time.Millisecond
+	defer func() { rawRequestTimeout = orig }()
+
+	start := time.Now()
+	_, err := jcGetRaw(server.URL, testHeaders, "/widgets/abc")
+	require.Error(t, err, "a stalled GET must fail rather than hang")
+	_, err = jcWriteRaw(http.MethodPut, server.URL, testHeaders, "/widgets/abc", map[string]interface{}{"enabled": true})
+	require.Error(t, err, "a stalled write must fail rather than hang")
+	assert.Less(t, time.Since(start), 5*time.Second)
 }
 
 func TestJcGetRaw(t *testing.T) {
