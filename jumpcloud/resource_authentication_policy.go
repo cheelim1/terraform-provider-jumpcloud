@@ -366,13 +366,8 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	obligations["mfaFactors"] = mfaFactors
 	obligations["mfaFactorSelectionMode"] = d.Get("mfa_factor_selection_mode").(string)
 
-	resourceTypes := d.Get("target_resource_types").([]interface{})
-	resources := make([]map[string]interface{}, 0, len(resourceTypes))
-	for _, t := range resourceTypes {
-		resources = append(resources, map[string]interface{}{"type": t.(string)})
-	}
 	targets := subMap(body, "targets")
-	targets["resources"] = resources
+	targets["resources"] = mergeResourceSelectors(targets["resources"], d.Get("target_resource_types").([]interface{}))
 	subMap(targets, "users")["inclusions"] = stringSliceFromInterfaceList(d.Get("target_user_inclusions").([]interface{}))
 	targets["excludedApplications"] = stringSliceFromInterfaceList(d.Get("target_excluded_applications").([]interface{}))
 	// userGroups isn't a managed field. Preserve whatever the policy has; only
@@ -387,6 +382,36 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	}
 
 	return body, nil
+}
+
+// mergeResourceSelectors builds targets.resources from the configured resource
+// types while keeping each existing selector's other fields -- notably the id
+// of an application-scoped selector, which this resource can't represent in
+// state. Each configured type reuses the next not-yet-used existing selector of
+// that type; only a type with no existing selector gets a bare {"type": ...}.
+// Without this, a name-only update to an imported application-scoped policy
+// would drop its application ids and widen it to every application.
+func mergeResourceSelectors(existing interface{}, types []interface{}) []interface{} {
+	current, _ := existing.([]interface{})
+	used := make([]bool, len(current))
+	out := make([]interface{}, 0, len(types))
+	for _, t := range types {
+		typ := t.(string)
+		var picked interface{}
+		for i, sel := range current {
+			m, ok := sel.(map[string]interface{})
+			if !used[i] && ok && m["type"] == typ {
+				used[i] = true
+				picked = m
+				break
+			}
+		}
+		if picked == nil {
+			picked = map[string]interface{}{"type": typ}
+		}
+		out = append(out, picked)
+	}
+	return out
 }
 
 // subMap returns m[key] as a map, creating (and storing) an empty one when it

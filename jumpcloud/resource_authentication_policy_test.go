@@ -235,6 +235,82 @@ func TestResourceAuthenticationPolicyUpdatePreservesUnmanagedTargetsAndEffect(t 
 	assert.Equal(t, "Renamed policy", gotBody["name"])
 }
 
+// An imported application-scoped policy keeps its application ids on a
+// name-only update. Read only retains the selector type, so state can't carry
+// the id; dropping it would widen the policy to every application.
+func TestResourceAuthenticationPolicyUpdatePreservesResourceSelectorIds(t *testing.T) {
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "policy1",
+				"targets": map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{"type": "application", "id": "app1"},
+						map[string]interface{}{"type": "application", "id": "app2"},
+						map[string]interface{}{"type": "user_portal"},
+					},
+				},
+			})
+		case http.MethodPatch:
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(gotBody)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	values := authPolicySchemaFixture()
+	values["name"] = "Renamed policy"
+	values["target_resource_types"] = []interface{}{"application", "application", "user_portal"}
+	d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, values)
+	d.SetId("policy1")
+
+	require.NoError(t, resourceAuthenticationPolicyUpdate(d, config))
+
+	resources := gotBody["targets"].(map[string]interface{})["resources"].([]interface{})
+	assert.Equal(t, []interface{}{
+		map[string]interface{}{"type": "application", "id": "app1"},
+		map[string]interface{}{"type": "application", "id": "app2"},
+		map[string]interface{}{"type": "user_portal"},
+	}, resources, "existing selectors, including application ids, must survive a name-only update")
+}
+
+func TestMergeResourceSelectors(t *testing.T) {
+	existing := []interface{}{
+		map[string]interface{}{"type": "application", "id": "app1"},
+		map[string]interface{}{"type": "user_portal"},
+	}
+
+	// A newly added type gets a bare selector; kept types keep their ids.
+	got := mergeResourceSelectors(existing, []interface{}{"application", "user_portal", "ldap"})
+	assert.Equal(t, []interface{}{
+		map[string]interface{}{"type": "application", "id": "app1"},
+		map[string]interface{}{"type": "user_portal"},
+		map[string]interface{}{"type": "ldap"},
+	}, got)
+
+	// A removed type is dropped, along with its selector.
+	got = mergeResourceSelectors(existing, []interface{}{"user_portal"})
+	assert.Equal(t, []interface{}{map[string]interface{}{"type": "user_portal"}}, got)
+
+	// Create (no existing selectors) sends bare type selectors.
+	got = mergeResourceSelectors(nil, []interface{}{"user_portal"})
+	assert.Equal(t, []interface{}{map[string]interface{}{"type": "user_portal"}}, got)
+
+	// No configured types yields an empty (non-nil) list, not null.
+	got = mergeResourceSelectors(existing, nil)
+	assert.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
 // With no existing policy (Create), userGroups is still sent empty, matching
 // the real schema.
 func TestResourceAuthenticationPolicyCreateDefaultsEmptyUserGroups(t *testing.T) {
