@@ -4,11 +4,14 @@ page_title: "jumpcloud_default_access_policy Resource - terraform-provider-jumpc
 subcategory: ""
 description: |-
   Manages one of JumpCloud's four fallback access policies ("Default Access Policy Settings" on the MFA Configurations admin page): application, userportal, adminportal, or ldap. Built from a captured browser request -- not documented anywhere else.
+  Warning: destroying this resource relaxes authentication. JumpCloud always has one fallback policy per resource type, so there is nothing to delete; destroy instead resets the fallback to JumpCloud's permissive default (action "allow", MFA not required, user verification "none") rather than just ceasing to manage it. If the fallback currently requires MFA, removing this resource from configuration turns that requirement off.
 ---
 
 # jumpcloud_default_access_policy (Resource)
 
 Manages one of JumpCloud's four fallback access policies ("Default Access Policy Settings" on the MFA Configurations admin page): application, userportal, adminportal, or ldap. Built from a captured browser request -- not documented anywhere else.
+
+Warning: destroying this resource relaxes authentication. JumpCloud always has one fallback policy per resource type, so there is nothing to delete; destroy instead resets the fallback to JumpCloud's permissive default (action "allow", MFA not required, user verification "none") rather than just ceasing to manage it. If the fallback currently requires MFA, removing this resource from configuration turns that requirement off.
 
 
 

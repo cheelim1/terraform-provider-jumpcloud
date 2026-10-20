@@ -12,6 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Destroy writes allow / MFA not required / user verification none, which can
+// relax authentication. The resource description (and so the generated docs)
+// must say so before users remove the resource from configuration.
+func TestResourceDefaultAccessPolicyDescriptionDisclosesDestroyBehavior(t *testing.T) {
+	desc := resourceDefaultAccessPolicy().Description
+	assert.Contains(t, desc, "destroying this resource relaxes authentication")
+	assert.Contains(t, desc, `action "allow"`)
+	assert.Contains(t, desc, "MFA not required")
+}
+
 func TestResourceDefaultAccessPolicyCreateUpdate(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody map[string]interface{}
