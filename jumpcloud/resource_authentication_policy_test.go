@@ -235,6 +235,65 @@ func TestResourceAuthenticationPolicyUpdatePreservesUnmanagedTargetsAndEffect(t 
 	assert.Equal(t, "Renamed policy", gotBody["name"])
 }
 
+// Read must not treat old state as current remote state: when the response
+// drops an optional field (or sends null), the field resets to its effective
+// default instead of keeping the stale value and hiding the drift.
+func TestResourceAuthenticationPolicyReadResetsFieldsMissingFromResponse(t *testing.T) {
+	responses := map[string]map[string]interface{}{
+		"effect with empty obligations, null conditions": {
+			"id":         "policy1",
+			"name":       "Require MFA - User Portal",
+			"conditions": nil,
+			"effect":     map[string]interface{}{"action": "allow", "obligations": map[string]interface{}{}},
+			"targets":    map[string]interface{}{},
+		},
+		"no effect, conditions, or targets at all": {
+			"id":   "policy1",
+			"name": "Require MFA - User Portal",
+		},
+	}
+
+	for name, resp := range responses {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer server.Close()
+
+			config := jcapiv2.NewConfiguration()
+			config.BasePath = server.URL
+			config.AddDefaultHeader("x-api-key", "test-key")
+
+			// State starts fully populated, as after a previous apply.
+			values := authPolicySchemaFixture()
+			values["description"] = "old description"
+			values["monitor_only"] = true
+			values["conditions_json"] = `{"ipAddress":["10.0.0.0/8"]}`
+			values["mfa_factor_selection_mode"] = "any"
+			values["user_verification_requirement"] = "required"
+			values["target_excluded_applications"] = []interface{}{"app1"}
+			d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, values)
+			d.SetId("policy1")
+			require.Equal(t, true, d.Get("mfa_required"), "precondition: state is populated")
+
+			require.NoError(t, resourceAuthenticationPolicyRead(d, config))
+
+			assert.Equal(t, false, d.Get("mfa_required"))
+			assert.Empty(t, d.Get("mfa_factors"))
+			assert.Equal(t, "{}", d.Get("conditions_json"))
+			assert.Equal(t, "all", d.Get("mfa_factor_selection_mode"))
+			assert.Equal(t, "none", d.Get("user_verification_requirement"))
+			assert.Empty(t, d.Get("target_resource_types"))
+			assert.Empty(t, d.Get("target_user_inclusions"))
+			assert.Empty(t, d.Get("target_excluded_applications"))
+			assert.Equal(t, "", d.Get("description"))
+			assert.Equal(t, false, d.Get("disabled"))
+			assert.Equal(t, false, d.Get("monitor_only"))
+		})
+	}
+}
+
 // An imported application-scoped policy keeps its application ids on a
 // name-only update. Read only retains the selector type, so state can't carry
 // the id; dropping it would widen the policy to every application.

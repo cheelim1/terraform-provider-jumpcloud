@@ -186,107 +186,80 @@ func resourceAuthenticationPolicyRead(d *schema.ResourceData, meta interface{}) 
 		return err
 	}
 
-	if v, ok := raw["name"].(string); ok {
-		if err := d.Set("name", v); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["description"].(string); ok {
-		if err := d.Set("description", v); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["type"].(string); ok {
-		if err := d.Set("type", v); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["disabled"].(bool); ok {
-		if err := d.Set("disabled", v); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["monitorOnly"].(bool); ok {
-		if err := d.Set("monitor_only", v); err != nil {
-			return err
-		}
-	}
-	if cond, ok := raw["conditions"]; ok && cond != nil {
+	// Every field is set unconditionally, using its effective default when the
+	// response omits it (or sends null). Skipping absent fields would leave the
+	// previous value in state and make a remote change invisible to Terraform.
+	effect, _ := raw["effect"].(map[string]interface{})
+	obligations, _ := effect["obligations"].(map[string]interface{})
+	mfa, _ := obligations["mfa"].(map[string]interface{})
+	userVerification, _ := obligations["userVerification"].(map[string]interface{})
+	targets, _ := raw["targets"].(map[string]interface{})
+	users, _ := targets["users"].(map[string]interface{})
+
+	conditionsJSON := "{}"
+	if cond := raw["conditions"]; cond != nil {
 		b, err := json.Marshal(cond)
 		if err != nil {
 			return fmt.Errorf("re-encoding conditions for state: %w", err)
 		}
-		if err := d.Set("conditions_json", string(b)); err != nil {
-			return err
-		}
+		conditionsJSON = string(b)
 	}
 
-	if effect, ok := raw["effect"].(map[string]interface{}); ok {
-		if v, ok := effect["action"].(string); ok {
-			if err := d.Set("effect_action", v); err != nil {
-				return err
-			}
-		}
-		if obligations, ok := effect["obligations"].(map[string]interface{}); ok {
-			if mfa, ok := obligations["mfa"].(map[string]interface{}); ok {
-				required, _ := mfa["required"].(bool)
-				if err := d.Set("mfa_required", required); err != nil {
-					return err
-				}
-			}
-			if uv, ok := obligations["userVerification"].(map[string]interface{}); ok {
-				if v, ok := uv["requirement"].(string); ok {
-					if err := d.Set("user_verification_requirement", v); err != nil {
-						return err
-					}
-				}
-			}
-			if v, ok := obligations["mfaFactorSelectionMode"].(string); ok {
-				if err := d.Set("mfa_factor_selection_mode", v); err != nil {
-					return err
-				}
-			}
-			if factors, ok := obligations["mfaFactors"].([]interface{}); ok {
-				types := make([]string, 0, len(factors))
-				for _, f := range factors {
-					if fm, ok := f.(map[string]interface{}); ok {
-						if t, ok := fm["type"].(string); ok {
-							types = append(types, t)
-						}
-					}
-				}
-				if err := d.Set("mfa_factors", types); err != nil {
-					return err
-				}
-			}
-		}
+	values := map[string]interface{}{
+		"name":                          stringOr(raw["name"], ""),
+		"description":                   stringOr(raw["description"], ""),
+		"type":                          stringOr(raw["type"], ""),
+		"disabled":                      boolOr(raw["disabled"], false),
+		"monitor_only":                  boolOr(raw["monitorOnly"], false),
+		"conditions_json":               conditionsJSON,
+		"effect_action":                 stringOr(effect["action"], ""),
+		"mfa_required":                  boolOr(mfa["required"], false),
+		"mfa_factors":                   typesFromObjects(obligations["mfaFactors"]),
+		"mfa_factor_selection_mode":     stringOr(obligations["mfaFactorSelectionMode"], "all"),
+		"user_verification_requirement": stringOr(userVerification["requirement"], "none"),
+		"target_resource_types":         typesFromObjects(targets["resources"]),
+		"target_user_inclusions":        stringSliceFromAny(users["inclusions"]),
+		"target_excluded_applications":  stringSliceFromAny(targets["excludedApplications"]),
 	}
-
-	if targets, ok := raw["targets"].(map[string]interface{}); ok {
-		if resources, ok := targets["resources"].([]interface{}); ok {
-			types := make([]string, 0, len(resources))
-			for _, r := range resources {
-				if rm, ok := r.(map[string]interface{}); ok {
-					if t, ok := rm["type"].(string); ok {
-						types = append(types, t)
-					}
-				}
-			}
-			if err := d.Set("target_resource_types", types); err != nil {
-				return err
-			}
-		}
-		if users, ok := targets["users"].(map[string]interface{}); ok {
-			if err := d.Set("target_user_inclusions", stringSliceFromAny(users["inclusions"])); err != nil {
-				return err
-			}
-		}
-		if err := d.Set("target_excluded_applications", stringSliceFromAny(targets["excludedApplications"])); err != nil {
+	for k, v := range values {
+		if err := d.Set(k, v); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// stringOr returns v as a string, or def when v is absent, null, or not a string.
+func stringOr(v interface{}, def string) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return def
+}
+
+// boolOr returns v as a bool, or def when v is absent, null, or not a bool.
+func boolOr(v interface{}, def bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return def
+}
+
+// typesFromObjects extracts the "type" of each object in a raw JSON array of
+// objects (mfaFactors, targets.resources). A missing or non-array value yields
+// an empty slice.
+func typesFromObjects(raw interface{}) []string {
+	arr, _ := raw.([]interface{})
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if m, ok := item.(map[string]interface{}); ok {
+			if t, ok := m["type"].(string); ok {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
 }
 
 func resourceAuthenticationPolicyUpdate(d *schema.ResourceData, meta interface{}) error {
