@@ -255,6 +255,31 @@ func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string
 	return string(resp.Body()), nil
 }
 
+// stringOr returns v as a string, or def when v is absent, null, or not a string.
+func stringOr(v interface{}, def string) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return def
+}
+
+// boolOr returns v as a bool, or def when v is absent, null, or not a bool.
+func boolOr(v interface{}, def bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return def
+}
+
+// intOr returns v as an int, or def when v is absent, null, or not a number.
+// encoding/json decodes every JSON number into a float64.
+func intOr(v interface{}, def int) int {
+	if f, ok := v.(float64); ok {
+		return int(f)
+	}
+	return def
+}
+
 func stringInSlice(a string, list []string) bool {
 	for _, b := range list {
 		if b == a {

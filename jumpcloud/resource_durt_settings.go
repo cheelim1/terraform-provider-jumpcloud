@@ -81,12 +81,9 @@ func resourceDurtSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	d.SetId(durtSettingsID)
-	if v, ok := raw["enabled"].(bool); ok {
-		if err := d.Set("enabled", v); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Set unconditionally, defaulting when the response omits the field, so a
+	// missing field can't leave a stale value in state.
+	return d.Set("enabled", boolOr(raw["enabled"], false))
 }
 
 func resourceDurtSettingsDelete(d *schema.ResourceData, meta interface{}) error {

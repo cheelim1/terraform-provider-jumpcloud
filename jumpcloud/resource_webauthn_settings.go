@@ -114,12 +114,9 @@ func resourceWebauthnSettingsRead(d *schema.ResourceData, meta interface{}) erro
 	if err := d.Set("config_id", d.Id()); err != nil {
 		return err
 	}
-	if v, ok := raw["allowSelfRegistration"].(bool); ok {
-		if err := d.Set("allow_self_registration", v); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Set unconditionally, defaulting when the response omits the field, so a
+	// missing field can't leave a stale value in state.
+	return d.Set("allow_self_registration", boolOr(raw["allowSelfRegistration"], false))
 }
 
 func resourceWebauthnSettingsDelete(d *schema.ResourceData, meta interface{}) error {

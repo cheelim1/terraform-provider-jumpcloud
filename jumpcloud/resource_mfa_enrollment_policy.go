@@ -99,20 +99,16 @@ func resourceMfaEnrollmentPolicyRead(d *schema.ResourceData, meta interface{}) e
 	}
 
 	d.SetId(mfaEnrollmentPolicyID)
-	if v, ok := raw["requirePrimaryFactor"].(bool); ok {
-		if err := d.Set("require_primary_factor", v); err != nil {
-			return err
-		}
+	// Set unconditionally, defaulting when the response omits a field, so a
+	// missing field can't leave a stale value in state.
+	if err := d.Set("require_primary_factor", boolOr(raw["requirePrimaryFactor"], false)); err != nil {
+		return err
 	}
-	if v, ok := raw["gracePeriodDays"].(float64); ok {
-		if err := d.Set("grace_period_days", int(v)); err != nil {
-			return err
-		}
+	if err := d.Set("grace_period_days", intOr(raw["gracePeriodDays"], 0)); err != nil {
+		return err
 	}
-	if v, ok := raw["requireBackupFactor"].(bool); ok {
-		if err := d.Set("require_backup_factor", v); err != nil {
-			return err
-		}
+	if err := d.Set("require_backup_factor", boolOr(raw["requireBackupFactor"], false)); err != nil {
+		return err
 	}
 	return nil
 }

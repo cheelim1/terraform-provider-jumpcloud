@@ -230,22 +230,6 @@ func resourceAuthenticationPolicyRead(d *schema.ResourceData, meta interface{}) 
 	return nil
 }
 
-// stringOr returns v as a string, or def when v is absent, null, or not a string.
-func stringOr(v interface{}, def string) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return def
-}
-
-// boolOr returns v as a bool, or def when v is absent, null, or not a bool.
-func boolOr(v interface{}, def bool) bool {
-	if b, ok := v.(bool); ok {
-		return b
-	}
-	return def
-}
-
 // typesFromObjects extracts the "type" of each object in a raw JSON array of
 // objects (mfaFactors, targets.resources). A missing or non-array value yields
 // an empty slice.

@@ -158,29 +158,18 @@ func resourcePushSettingsRead(d *schema.ResourceData, meta interface{}) error {
 	if err := d.Set("config_id", d.Id()); err != nil {
 		return err
 	}
-	if v, ok := raw["userVerification"].(string); ok {
-		if err := d.Set("user_verification", v); err != nil {
+	// Set unconditionally, defaulting when the response omits a field, so a
+	// missing field can't leave a stale value in state.
+	limit, _ := raw["concurrentLimit"].(map[string]interface{})
+	for k, v := range map[string]interface{}{
+		"user_verification":        stringOr(raw["userVerification"], "discouraged"),
+		"is_totp_integrated":       boolOr(raw["isTotpIntegrated"], true),
+		"exclusion_groups":         stringSliceFromAny(raw["exclusionGroups"]),
+		"concurrent_limit_enabled": boolOr(limit["enabled"], true),
+		"concurrent_limit_max":     intOr(limit["max"], 1),
+	} {
+		if err := d.Set(k, v); err != nil {
 			return err
-		}
-	}
-	if v, ok := raw["isTotpIntegrated"].(bool); ok {
-		if err := d.Set("is_totp_integrated", v); err != nil {
-			return err
-		}
-	}
-	if err := d.Set("exclusion_groups", stringSliceFromAny(raw["exclusionGroups"])); err != nil {
-		return err
-	}
-	if limit, ok := raw["concurrentLimit"].(map[string]interface{}); ok {
-		if v, ok := limit["enabled"].(bool); ok {
-			if err := d.Set("concurrent_limit_enabled", v); err != nil {
-				return err
-			}
-		}
-		if v, ok := limit["max"].(float64); ok {
-			if err := d.Set("concurrent_limit_max", int(v)); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

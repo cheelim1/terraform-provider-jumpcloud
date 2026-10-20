@@ -109,15 +109,13 @@ func resourceMfaFactorRead(d *schema.ResourceData, meta interface{}) error {
 	if err := d.Set("factor_type", d.Id()); err != nil {
 		return err
 	}
-	if v, ok := raw["enabled"].(bool); ok {
-		if err := d.Set("enabled", v); err != nil {
-			return err
-		}
+	// Set unconditionally, defaulting when the response omits a field, so a
+	// missing field can't leave a stale value in state.
+	if err := d.Set("enabled", boolOr(raw["enabled"], true)); err != nil {
+		return err
 	}
-	if v, ok := raw["readOnly"].(bool); ok {
-		if err := d.Set("read_only", v); err != nil {
-			return err
-		}
+	if err := d.Set("read_only", boolOr(raw["readOnly"], false)); err != nil {
+		return err
 	}
 	return nil
 }
