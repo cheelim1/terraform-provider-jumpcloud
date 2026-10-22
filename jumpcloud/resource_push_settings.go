@@ -2,7 +2,6 @@ package jumpcloud
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
@@ -24,7 +23,9 @@ func resourcePushSettings() *schema.Resource {
 		Description: "Manages JumpCloud's org-wide Push (JumpCloud Protect) " +
 			"factor configuration. Built from a captured browser request " +
 			"against JumpCloud's \"MFA Configurations\" admin page (Push's " +
-			"\"Additional Settings\" section) -- not documented anywhere else.",
+			"\"Additional Settings\" section) -- not documented anywhere else.\n\n" +
+			"Destroying this resource only removes it from Terraform state: the " +
+			"push configuration is left exactly as last applied, not reset.",
 		Create: resourcePushSettingsCreateUpdate,
 		Read:   resourcePushSettingsRead,
 		Update: resourcePushSettingsCreateUpdate,
@@ -88,22 +89,7 @@ func resolvePushConfigId(config *jcapiv2.Configuration, d *schema.ResourceData) 
 		return v.(string), nil
 	}
 
-	headers := config.DefaultHeader
-	configs, err := jcListArrayRaw(config.BasePath, headers, "/push/configs")
-	if err != nil {
-		return "", err
-	}
-	if len(configs) == 0 {
-		return "", fmt.Errorf("no push configs visible to this API key; set config_id explicitly")
-	}
-	id, _ := configs[0]["id"].(string)
-	if id == "" {
-		id, _ = configs[0]["_id"].(string)
-	}
-	if id == "" {
-		return "", fmt.Errorf("could not determine push config id from /push/configs response")
-	}
-	return id, nil
+	return discoverSingletonConfigId(config, "/push/configs", "push", "id", "_id")
 }
 
 func resourcePushSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) error {

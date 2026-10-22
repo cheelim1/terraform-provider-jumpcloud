@@ -4,11 +4,14 @@ page_title: "jumpcloud_push_settings Resource - terraform-provider-jumpcloud"
 subcategory: ""
 description: |-
   Manages JumpCloud's org-wide Push (JumpCloud Protect) factor configuration. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page (Push's "Additional Settings" section) -- not documented anywhere else.
+  Destroying this resource only removes it from Terraform state: the push configuration is left exactly as last applied, not reset.
 ---
 
 # jumpcloud_push_settings (Resource)
 
 Manages JumpCloud's org-wide Push (JumpCloud Protect) factor configuration. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page (Push's "Additional Settings" section) -- not documented anywhere else.
+
+Destroying this resource only removes it from Terraform state: the push configuration is left exactly as last applied, not reset.
 
 
 

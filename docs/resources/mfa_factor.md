@@ -4,11 +4,14 @@ page_title: "jumpcloud_mfa_factor Resource - terraform-provider-jumpcloud"
 subcategory: ""
 description: |-
   Manages whether an MFA factor type (e.g. "webauthn", "totp", "push", "sms") is enabled org-wide. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page -- not documented anywhere else, including this provider's Go SDK and JumpCloud's own actively maintained CLI.
+  Warning: destroying this resource disables the factor type org-wide (unless JumpCloud reports it as read_only), rather than just ceasing to manage it. Users who rely on that factor lose it as an option, and any authentication policy that requires it can no longer be satisfied with it.
 ---
 
 # jumpcloud_mfa_factor (Resource)
 
 Manages whether an MFA factor type (e.g. "webauthn", "totp", "push", "sms") is enabled org-wide. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page -- not documented anywhere else, including this provider's Go SDK and JumpCloud's own actively maintained CLI.
+
+Warning: destroying this resource disables the factor type org-wide (unless JumpCloud reports it as read_only), rather than just ceasing to manage it. Users who rely on that factor lose it as an option, and any authentication policy that requires it can no longer be satisfied with it.
 
 
 

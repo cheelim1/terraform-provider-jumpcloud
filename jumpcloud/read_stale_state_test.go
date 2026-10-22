@@ -87,6 +87,32 @@ func TestReadsResetFieldsMissingFromResponse(t *testing.T) {
 				"exclusion_groups":         []interface{}{},
 			},
 		},
+		{
+			name:     "default_access_policy",
+			resource: resourceDefaultAccessPolicy(),
+			id:       "userportal",
+			populate: map[string]interface{}{
+				"resource_type":     "userportal",
+				"effect_action":     "deny",
+				"mfa_required":      true,
+				"user_verification": "required",
+			},
+			read: resourceDefaultAccessPolicyRead,
+			want: map[string]interface{}{
+				"resource_type":     "userportal",
+				"effect_action":     "allow",
+				"mfa_required":      false,
+				"user_verification": "none",
+			},
+		},
+		{
+			name:     "organization_settings",
+			resource: resourceOrganizationSettings(),
+			id:       "org1",
+			populate: map[string]interface{}{"org_id": "org1", "require_admin_mfa": true},
+			read:     resourceOrganizationSettingsRead,
+			want:     map[string]interface{}{"org_id": "org1", "require_admin_mfa": false},
+		},
 	}
 
 	for _, c := range cases {

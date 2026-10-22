@@ -308,10 +308,6 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	}
 	body["conditions"] = cond
 
-	mfaFactors := make([]map[string]interface{}, 0)
-	for _, f := range d.Get("mfa_factors").([]interface{}) {
-		mfaFactors = append(mfaFactors, map[string]interface{}{"type": f.(string)})
-	}
 	// Merge the managed fields into whatever the policy already has, rather
 	// than rebuilding these objects, so fields this resource doesn't expose
 	// (userGroups selectors, users.exclusions, ...) survive an update.
@@ -320,7 +316,9 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	obligations := subMap(effect, "obligations")
 	subMap(obligations, "mfa")["required"] = d.Get("mfa_required").(bool)
 	subMap(obligations, "userVerification")["requirement"] = d.Get("user_verification_requirement").(string)
-	obligations["mfaFactors"] = mfaFactors
+	// Like targets.resources below: keep any other fields on an existing
+	// factor object rather than rebuilding each one as a bare {"type": ...}.
+	obligations["mfaFactors"] = mergeResourceSelectors(obligations["mfaFactors"], d.Get("mfa_factors").([]interface{}))
 	obligations["mfaFactorSelectionMode"] = d.Get("mfa_factor_selection_mode").(string)
 
 	targets := subMap(body, "targets")
@@ -341,8 +339,9 @@ func buildAuthPolicyRequestBody(seed map[string]interface{}, d *schema.ResourceD
 	return body, nil
 }
 
-// mergeResourceSelectors builds targets.resources from the configured resource
-// types while keeping each existing selector's other fields -- notably the id
+// mergeResourceSelectors builds a list of {"type": ...} objects (used for
+// targets.resources and effect.obligations.mfaFactors) from the configured
+// types while keeping each existing object's other fields -- notably the id
 // of an application-scoped selector, which this resource can't represent in
 // state. Each configured type reuses the next not-yet-used existing selector of
 // that type; only a type with no existing selector gets a bare {"type": ...}.

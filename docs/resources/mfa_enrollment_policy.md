@@ -4,11 +4,14 @@ page_title: "jumpcloud_mfa_enrollment_policy Resource - terraform-provider-jumpc
 subcategory: ""
 description: |-
   Manages JumpCloud's org-wide MFA enrollment policy -- whether all users must enroll an MFA factor, and the grace period before enforcement begins. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page -- not documented anywhere else, including this provider's Go SDK and JumpCloud's own actively maintained CLI.
+  Warning: destroying this resource relaxes MFA enrollment. The enrollment policy is a singleton that always exists, so destroy resets it to JumpCloud's default (no primary or backup factor required, grace period 0) rather than just ceasing to manage it.
 ---
 
 # jumpcloud_mfa_enrollment_policy (Resource)
 
 Manages JumpCloud's org-wide MFA enrollment policy -- whether all users must enroll an MFA factor, and the grace period before enforcement begins. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page -- not documented anywhere else, including this provider's Go SDK and JumpCloud's own actively maintained CLI.
+
+Warning: destroying this resource relaxes MFA enrollment. The enrollment policy is a singleton that always exists, so destroy resets it to JumpCloud's default (no primary or backup factor required, grace period 0) rather than just ceasing to manage it.
 
 
 

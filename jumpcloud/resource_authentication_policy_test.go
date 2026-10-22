@@ -470,3 +470,65 @@ func TestResourceAuthenticationPolicyDeleteNotFoundIsNotAnError(t *testing.T) {
 	require.NoError(t, resourceAuthenticationPolicyDelete(d, config))
 	assert.Equal(t, "", d.Id())
 }
+
+// Like resource selectors, existing mfaFactors objects keep any fields this
+// resource doesn't model on update; only newly added types are bare objects,
+// and removed types are dropped.
+func TestResourceAuthenticationPolicyUpdatePreservesMfaFactorFields(t *testing.T) {
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "policy1",
+				"effect": map[string]interface{}{
+					"action": "allow",
+					"obligations": map[string]interface{}{
+						"mfaFactors": []interface{}{
+							map[string]interface{}{"type": "TOTP", "extra": "keep-me"},
+							map[string]interface{}{"type": "SMS"},
+						},
+					},
+				},
+			})
+		case http.MethodPatch:
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(gotBody)
+		default:
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	values := authPolicySchemaFixture()
+	values["mfa_factors"] = []interface{}{"TOTP", "PUSH"}
+	d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, values)
+	d.SetId("policy1")
+
+	require.NoError(t, resourceAuthenticationPolicyUpdate(d, config))
+
+	obligations := gotBody["effect"].(map[string]interface{})["obligations"].(map[string]interface{})
+	assert.Equal(t, []interface{}{
+		map[string]interface{}{"type": "TOTP", "extra": "keep-me"},
+		map[string]interface{}{"type": "PUSH"},
+	}, obligations["mfaFactors"])
+}
+
+// An empty mfa_factors list must still be sent as [] (not null/omitted), as
+// before the merge change.
+func TestResourceAuthenticationPolicyCreateSendsEmptyMfaFactorsArray(t *testing.T) {
+	values := authPolicySchemaFixture()
+	values["mfa_factors"] = []interface{}{}
+	d := schema.TestResourceDataRaw(t, resourceAuthenticationPolicy().Schema, values)
+
+	body, err := buildAuthPolicyRequestBody(nil, d)
+	require.NoError(t, err)
+	b, err := json.Marshal(body["effect"].(map[string]interface{})["obligations"].(map[string]interface{})["mfaFactors"])
+	require.NoError(t, err)
+	assert.Equal(t, "[]", string(b))
+}

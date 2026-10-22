@@ -17,7 +17,7 @@ Manages JumpCloud's org-wide "JumpCloud Go" (DURT) factor configuration. Built f
 
 ### Optional
 
-- `enabled` (Boolean) Whether JumpCloud Go (DURT) is enabled org-wide. Destroying this resource resets it to false.
+- `enabled` (Boolean) Whether JumpCloud Go (DURT) is enabled org-wide. Destroying this resource resets it to false (unless JumpCloud reports the setting as read-only, in which case it is left as is).
 
 ### Read-Only
 

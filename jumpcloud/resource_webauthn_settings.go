@@ -2,7 +2,6 @@ package jumpcloud
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
@@ -60,22 +59,7 @@ func resolveWebauthnConfigId(config *jcapiv2.Configuration, d *schema.ResourceDa
 		return v.(string), nil
 	}
 
-	headers := config.DefaultHeader
-	configs, err := jcListArrayRaw(config.BasePath, headers, "/webauthn/configs")
-	if err != nil {
-		return "", err
-	}
-	if len(configs) == 0 {
-		return "", fmt.Errorf("no webauthn configs visible to this API key; set config_id explicitly")
-	}
-	id, _ := configs[0]["_id"].(string)
-	if id == "" {
-		id, _ = configs[0]["id"].(string)
-	}
-	if id == "" {
-		return "", fmt.Errorf("could not determine webauthn config id from /webauthn/configs response")
-	}
-	return id, nil
+	return discoverSingletonConfigId(config, "/webauthn/configs", "webauthn", "_id", "id")
 }
 
 func resourceWebauthnSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) error {
@@ -124,7 +108,7 @@ func resourceWebauthnSettingsDelete(d *schema.ResourceData, meta interface{}) er
 	headers := config.DefaultHeader
 
 	body := map[string]interface{}{"allowSelfRegistration": false}
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/webauthn/configs/"+d.Id(), body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/webauthn/configs/"+d.Id(), body); err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	d.SetId("")
