@@ -105,7 +105,11 @@ func resourceApplication() *schema.Resource {
 					"JumpCloud user profile property name (e.g. \"email\", \"firstname\", " +
 					"\"lastname\") -- confirmed against a captured browser request. Omit the " +
 					"block entirely to leave the mappings configured in JumpCloud unchanged; " +
-					"once set, the configured rows replace the existing ones.",
+					"once set, the configured rows replace the existing ones. Mappings cannot be " +
+					"cleared through Terraform once any exist: removing every block (or using a " +
+					"dynamic block with an empty for_each) leaves them in place, and `= []` or " +
+					"`= null` is not valid for a block. To remove all of them, delete them in the " +
+					"JumpCloud console.",
 				Type:     schema.TypeList,
 				Optional: true,
 				Computed: true,
