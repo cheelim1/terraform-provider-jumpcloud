@@ -2,6 +2,8 @@ package jumpcloud
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,6 +20,12 @@ import (
 
 const metadataXmlTimeout = 30 * time.Second
 
+// rawRequestTimeout bounds every request made through jcRawRequest. The raw
+// helpers take no cancellation context, so without a timeout a server that
+// accepts the connection but stalls would leave refresh/apply waiting forever
+// while Terraform holds its state lock. A var so tests can shorten it.
+var rawRequestTimeout = 30 * time.Second
+
 // isNotFound reports whether an SDK call failed because the object does not exist.
 // The SDK returns the HTTP response alongside the error for non-2xx statuses; the "EOF"
 // check is kept for the empty-body responses the API has historically returned.
@@ -29,6 +37,218 @@ func isNotFound(res *http.Response, err error) bool {
 		return true
 	}
 	return err.Error() == "EOF"
+}
+
+// ErrNotFound is returned by the Get/Delete raw helpers below when the
+// underlying object has been deleted outside Terraform.
+var ErrNotFound = errors.New("not found")
+
+// jcRawRequest builds a request for the raw helpers below, carrying the
+// provider configuration's default headers (x-api-key and, when configured,
+// x-org-id) so raw calls are scoped to the same organization as SDK calls.
+// Debug logging is deliberately off: resty's debug output includes request
+// headers, which would write the x-api-key to the TF_LOG output.
+func jcRawRequest(headers map[string]string) *resty.Request {
+	req := resty.New().SetTimeout(rawRequestTimeout).R().SetHeader("Accept", "application/json")
+	for k, v := range headers {
+		if v != "" {
+			req.SetHeader(k, v)
+		}
+	}
+	return req
+}
+
+// jcGetRaw fetches a raw JSON object from a v1 or v2 JumpCloud endpoint.
+func jcGetRaw(basePath string, headers map[string]string, path string) (map[string]interface{}, error) {
+	resp, err := jcRawRequest(headers).Get(basePath + path)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode() == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error getting %s: %s; body: %s",
+			path, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s: %w", path, err)
+	}
+	return result, nil
+}
+
+// jcListRaw fetches the "results" array from a v1 list endpoint, as a slice of
+// raw JSON objects.
+func jcListRaw(basePath string, headers map[string]string, path string) ([]map[string]interface{}, error) {
+	resp, err := jcRawRequest(headers).Get(basePath + path)
+	if err != nil {
+		return nil, err
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error listing %s: %s; body: %s",
+			path, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	var decoded struct {
+		Results []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(resp.Body(), &decoded); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s: %w", path, err)
+	}
+	return decoded.Results, nil
+}
+
+// jcListArrayRaw fetches a v2 list endpoint that returns a bare JSON array
+// directly (confirmed live for /push/configs and /webauthn/configs), unlike
+// v1 list endpoints (jcListRaw), which wrap results in a "results" key.
+func jcListArrayRaw(basePath string, headers map[string]string, path string) ([]map[string]interface{}, error) {
+	resp, err := jcRawRequest(headers).Get(basePath + path)
+	if err != nil {
+		return nil, err
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error listing %s: %s; body: %s",
+			path, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	var decoded []map[string]interface{}
+	if err := json.Unmarshal(resp.Body(), &decoded); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s: %w", path, err)
+	}
+	return decoded, nil
+}
+
+// jcWriteRaw POSTs, PUTs, or DELETEs a raw JSON body against a v1 or v2
+// JumpCloud endpoint. Some V2 endpoints answer a successful write with 204 and
+// an empty body, so an empty response body is treated as success rather than
+// a decode error.
+func jcWriteRaw(method, basePath string, headers map[string]string, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	req := jcRawRequest(headers).SetHeader("Content-Type", "application/json")
+	if body != nil {
+		req = req.SetBody(body)
+	}
+
+	var resp *resty.Response
+	var err error
+	switch method {
+	case http.MethodPost:
+		resp, err = req.Post(basePath + path)
+	case http.MethodPut:
+		resp, err = req.Put(basePath + path)
+	case http.MethodPatch:
+		resp, err = req.Patch(basePath + path)
+	case http.MethodDelete:
+		resp, err = req.Delete(basePath + path)
+	default:
+		return nil, fmt.Errorf("jcWriteRaw: unsupported method %s", method)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode() == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error %s %s: %s; body: %s",
+			method, path, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	respBody := strings.TrimSpace(string(resp.Body()))
+	if respBody == "" {
+		return nil, nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s %s: %w", method, path, err)
+	}
+	return result, nil
+}
+
+// OrganizationsListRaw lists organizations visible to this API key (v1).
+func OrganizationsListRaw(basePath string, headers map[string]string) ([]map[string]interface{}, error) {
+	return jcListRaw(basePath, headers, "/organizations")
+}
+
+// OrganizationGetRaw fetches the full, raw JSON representation of an
+// organization (v1), including its settings object.
+func OrganizationGetRaw(basePath string, headers map[string]string, orgId string) (map[string]interface{}, error) {
+	return jcGetRaw(basePath, headers, "/organizations/"+orgId)
+}
+
+// OrganizationUpdateRaw updates an organization (v1) from a raw request body.
+func OrganizationUpdateRaw(basePath string, headers map[string]string, orgId string, body map[string]interface{}) (map[string]interface{}, error) {
+	result, err := jcWriteRaw(http.MethodPut, basePath, headers, "/organizations/"+orgId, body)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		// Some organization settings writes answer with 204/empty body; the
+		// caller re-reads via OrganizationGetRaw afterward regardless.
+		return map[string]interface{}{}, nil
+	}
+	return result, nil
+}
+
+// AuthPolicyGetRaw fetches the full, raw JSON representation of an
+// authentication policy (v2).
+func AuthPolicyGetRaw(basePath string, headers map[string]string, id string) (map[string]interface{}, error) {
+	return jcGetRaw(basePath, headers, "/authn/policies/"+id)
+}
+
+// AuthPolicyCreateRaw creates an authentication policy (v2) from a raw request body.
+func AuthPolicyCreateRaw(basePath string, headers map[string]string, body map[string]interface{}) (map[string]interface{}, error) {
+	return jcWriteRaw(http.MethodPost, basePath, headers, "/authn/policies", body)
+}
+
+// AuthPolicyUpdateRaw updates an authentication policy (v2) from a raw request body.
+func AuthPolicyUpdateRaw(basePath string, headers map[string]string, id string, body map[string]interface{}) (map[string]interface{}, error) {
+	// Confirmed live via a captured browser request: this endpoint uses PATCH,
+	// not PUT (PUT 404s). jc-cli's generic V2Client.Update always uses PUT,
+	// which is wrong for this specific endpoint -- another case of jc-cli's
+	// own assumptions not holding for this unverified area.
+	result, err := jcWriteRaw(http.MethodPatch, basePath, headers, "/authn/policies/"+id, body)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return map[string]interface{}{}, nil
+	}
+	return result, nil
+}
+
+// AuthPolicyDeleteRaw deletes an authentication policy (v2).
+func AuthPolicyDeleteRaw(basePath string, headers map[string]string, id string) error {
+	_, err := jcWriteRaw(http.MethodDelete, basePath, headers, "/authn/policies/"+id, nil)
+	return err
+}
+
+// discoverSingletonConfigId lists a v2 config collection that is expected to
+// hold exactly one object per organization and returns that object's id,
+// trying idKeys in order. Like organization discovery, it refuses to guess
+// when the list holds several objects: list order isn't a selection contract,
+// and writing to the wrong config would silently change the wrong settings.
+func discoverSingletonConfigId(config *jcapiv2.Configuration, path, name string, idKeys ...string) (string, error) {
+	configs, err := jcListArrayRaw(config.BasePath, config.DefaultHeader, path)
+	if err != nil {
+		return "", err
+	}
+	if len(configs) == 0 {
+		return "", fmt.Errorf("no %s configs visible to this API key; set config_id explicitly", name)
+	}
+	if len(configs) > 1 {
+		return "", fmt.Errorf("GET %s returned %d %s configs; set config_id explicitly to choose one",
+			path, len(configs), name)
+	}
+	for _, k := range idKeys {
+		if id, _ := configs[0][k].(string); id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("could not determine %s config id from %s response", name, path)
 }
 
 // Gets an application's metadata XML for SAML authentication
@@ -58,6 +278,31 @@ func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string
 	}
 
 	return string(resp.Body()), nil
+}
+
+// stringOr returns v as a string, or def when v is absent, null, or not a string.
+func stringOr(v interface{}, def string) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return def
+}
+
+// boolOr returns v as a bool, or def when v is absent, null, or not a bool.
+func boolOr(v interface{}, def bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return def
+}
+
+// intOr returns v as an int, or def when v is absent, null, or not a number.
+// encoding/json decodes every JSON number into a float64.
+func intOr(v interface{}, def int) int {
+	if f, ok := v.(float64); ok {
+		return int(f)
+	}
+	return def
 }
 
 func stringInSlice(a string, list []string) bool {
