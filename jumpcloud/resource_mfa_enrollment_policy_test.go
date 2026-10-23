@@ -106,3 +106,18 @@ func TestResourceMfaEnrollmentPolicyDeleteResetsToDefault(t *testing.T) {
 	}, gotBody)
 	assert.Equal(t, "", d.Id())
 }
+
+func TestResourceMfaEnrollmentPolicyGracePeriodValidation(t *testing.T) {
+	validate := resourceMfaEnrollmentPolicy().Schema["grace_period_days"].ValidateFunc
+	require.NotNil(t, validate)
+	_, errs := validate(-1, "grace_period_days")
+	assert.NotEmpty(t, errs)
+	for _, ok := range []int{0, 7, 30} {
+		_, errs := validate(ok, "grace_period_days")
+		assert.Empty(t, errs, ok)
+	}
+}
+
+func TestResourceMfaEnrollmentPolicyDescriptionDisclosesDestroyBehavior(t *testing.T) {
+	assert.Contains(t, resourceMfaEnrollmentPolicy().Description, "destroying this resource relaxes MFA enrollment")
+}

@@ -122,3 +122,51 @@ func TestResourceDurtSettingsWriteAbortsOnGetError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom")
 }
+
+// When JumpCloud reports the DURT setting as readOnly, destroy must not try to
+// write it (the write can only be rejected) -- it just stops tracking it.
+func TestResourceDurtSettingsDeleteSkipsWriteWhenReadOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("must not write a readOnly setting, got: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"enabled": true, "readOnly": true})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceDurtSettings().Schema, map[string]interface{}{"enabled": true})
+	d.SetId(durtSettingsID)
+
+	require.NoError(t, resourceDurtSettingsDelete(d, config))
+	assert.Equal(t, "", d.Id())
+}
+
+// Create/Update still write when readOnly is true: that's an explicit user
+// request, and the API's own answer is the right error to surface.
+func TestResourceDurtSettingsCreateWritesEvenWhenReadOnly(t *testing.T) {
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			puts++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"enabled": true, "readOnly": true})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceDurtSettings().Schema, map[string]interface{}{"enabled": true})
+
+	require.NoError(t, resourceDurtSettingsCreateUpdate(d, config))
+	assert.Equal(t, 1, puts)
+}

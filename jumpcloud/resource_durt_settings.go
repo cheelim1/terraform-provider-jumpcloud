@@ -33,7 +33,8 @@ func resourceDurtSettings() *schema.Resource {
 		Schema: map[string]*schema.Schema{
 			"enabled": {
 				Description: "Whether JumpCloud Go (DURT) is enabled org-wide. " +
-					"Destroying this resource resets it to false.",
+					"Destroying this resource resets it to false (unless JumpCloud " +
+					"reports the setting as read-only, in which case it is left as is).",
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
@@ -42,7 +43,11 @@ func resourceDurtSettings() *schema.Resource {
 	}
 }
 
-func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
+// durtSettingsWrite PUTs enabled while preserving the server-controlled
+// readOnly flag. With skipIfReadOnly (destroy), a readOnly config is left
+// untouched instead of written, since that write can only be rejected and
+// would otherwise block destroy.
+func durtSettingsWrite(config *jcapiv2.Configuration, enabled, skipIfReadOnly bool) error {
 	headers := config.DefaultHeader
 
 	// readOnly is server-controlled, never user-set -- preserve whatever the
@@ -53,6 +58,9 @@ func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
 		return err
 	}
 	readOnly, _ := current["readOnly"].(bool)
+	if readOnly && skipIfReadOnly {
+		return nil
+	}
 
 	body := map[string]interface{}{
 		"enabled":  enabled,
@@ -64,7 +72,7 @@ func durtSettingsWrite(config *jcapiv2.Configuration, enabled bool) error {
 
 func resourceDurtSettingsCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	if err := durtSettingsWrite(config, d.Get("enabled").(bool)); err != nil {
+	if err := durtSettingsWrite(config, d.Get("enabled").(bool), false); err != nil {
 		return err
 	}
 	d.SetId(durtSettingsID)
@@ -88,7 +96,7 @@ func resourceDurtSettingsRead(d *schema.ResourceData, meta interface{}) error {
 
 func resourceDurtSettingsDelete(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
-	if err := durtSettingsWrite(config, false); err != nil {
+	if err := durtSettingsWrite(config, false, true); err != nil {
 		return err
 	}
 	d.SetId("")

@@ -226,6 +226,31 @@ func AuthPolicyDeleteRaw(basePath string, headers map[string]string, id string) 
 	return err
 }
 
+// discoverSingletonConfigId lists a v2 config collection that is expected to
+// hold exactly one object per organization and returns that object's id,
+// trying idKeys in order. Like organization discovery, it refuses to guess
+// when the list holds several objects: list order isn't a selection contract,
+// and writing to the wrong config would silently change the wrong settings.
+func discoverSingletonConfigId(config *jcapiv2.Configuration, path, name string, idKeys ...string) (string, error) {
+	configs, err := jcListArrayRaw(config.BasePath, config.DefaultHeader, path)
+	if err != nil {
+		return "", err
+	}
+	if len(configs) == 0 {
+		return "", fmt.Errorf("no %s configs visible to this API key; set config_id explicitly", name)
+	}
+	if len(configs) > 1 {
+		return "", fmt.Errorf("GET %s returned %d %s configs; set config_id explicitly to choose one",
+			path, len(configs), name)
+	}
+	for _, k := range idKeys {
+		if id, _ := configs[0][k].(string); id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("could not determine %s config id from %s response", name, path)
+}
+
 // Gets an application's metadata XML for SAML authentication
 // this direct API call is a needed workaround since JumpCloud does not offer this endpoint through its SDK
 func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string) (string, error) {

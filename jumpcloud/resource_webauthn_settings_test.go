@@ -124,3 +124,48 @@ func TestResourceWebauthnSettingsDeleteDisablesSelfRegistration(t *testing.T) {
 	assert.Equal(t, map[string]interface{}{"allowSelfRegistration": false}, gotBody)
 	assert.Equal(t, "", d.Id())
 }
+
+// Discovery must never pick one of several configs by list order; with more
+// than one, the user has to set config_id, and nothing is written.
+func TestResourceWebauthnSettingsCreateRejectsMultipleConfigs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/webauthn/configs" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{{"_id": "cfg1"}, {"_id": "cfg2"}})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceWebauthnSettings().Schema, map[string]interface{}{
+		"allow_self_registration": true,
+	})
+
+	err := resourceWebauthnSettingsCreateUpdate(d, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set config_id explicitly")
+	assert.Equal(t, "", d.Id())
+}
+
+func TestResourceWebauthnSettingsDeleteNotFoundIsNotAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceWebauthnSettings().Schema, map[string]interface{}{})
+	d.SetId("cfg1")
+
+	require.NoError(t, resourceWebauthnSettingsDelete(d, config))
+	assert.Equal(t, "", d.Id())
+}

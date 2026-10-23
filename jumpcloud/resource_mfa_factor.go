@@ -30,7 +30,12 @@ func resourceMfaFactor() *schema.Resource {
 			"\"totp\", \"push\", \"sms\") is enabled org-wide. Built from a " +
 			"captured browser request against JumpCloud's \"MFA Configurations\" " +
 			"admin page -- not documented anywhere else, including this " +
-			"provider's Go SDK and JumpCloud's own actively maintained CLI.",
+			"provider's Go SDK and JumpCloud's own actively maintained CLI.\n\n" +
+			"Warning: destroying this resource disables the factor type " +
+			"org-wide (unless JumpCloud reports it as read_only), rather than " +
+			"just ceasing to manage it. Users who rely on that factor lose it as " +
+			"an option, and any authentication policy that requires it can no " +
+			"longer be satisfied with it.",
 		Create: resourceMfaFactorCreateUpdate,
 		Read:   resourceMfaFactorRead,
 		Update: resourceMfaFactorCreateUpdate,
@@ -124,8 +129,14 @@ func resourceMfaFactorDelete(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
 	factorType := d.Get("factor_type").(string)
 
-	if err := mfaFactorWrite(configv1, factorType, false); err != nil {
-		return err
+	// A read_only factor's enabled state is server-controlled, so a disable
+	// write can only fail -- and would block destroy forever. Just stop
+	// tracking it. Likewise, a factor type the API no longer knows (404) is
+	// already gone.
+	if !d.Get("read_only").(bool) {
+		if err := mfaFactorWrite(configv1, factorType, false); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
 	}
 	d.SetId("")
 	return nil

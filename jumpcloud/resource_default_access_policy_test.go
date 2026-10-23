@@ -140,3 +140,67 @@ func TestResourceDefaultAccessPolicyDeleteResetsToSafeDefault(t *testing.T) {
 	assert.Equal(t, false, obligations["mfa"].(map[string]interface{})["required"])
 	assert.Equal(t, "", d.Id())
 }
+
+// A fallback policy whose MFA requirement was turned off outside Terraform
+// must show up as drift, even when the response nests the field differently
+// than expected (here: obligations present, mfa object absent).
+func TestResourceDefaultAccessPolicyReadResetsPartiallyMissingFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"effect": map[string]interface{}{
+				"action":      "allow",
+				"obligations": map[string]interface{}{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceDefaultAccessPolicy().Schema, map[string]interface{}{
+		"resource_type":     "adminportal",
+		"mfa_required":      true,
+		"user_verification": "required",
+	})
+	d.SetId("adminportal")
+
+	require.NoError(t, resourceDefaultAccessPolicyRead(d, config))
+	assert.Equal(t, false, d.Get("mfa_required"))
+	assert.Equal(t, "none", d.Get("user_verification"))
+	assert.Equal(t, "allow", d.Get("effect_action"))
+}
+
+func TestResourceDefaultAccessPolicyResourceTypeValidation(t *testing.T) {
+	validate := resourceDefaultAccessPolicy().Schema["resource_type"].ValidateFunc
+	require.NotNil(t, validate)
+	for _, ok := range []string{"application", "userportal", "adminportal", "ldap"} {
+		_, errs := validate(ok, "resource_type")
+		assert.Empty(t, errs, ok)
+	}
+	for _, bad := range []string{"user_portal", "admin", "Application", ""} {
+		_, errs := validate(bad, "resource_type")
+		assert.NotEmpty(t, errs, bad)
+	}
+}
+
+func TestResourceDefaultAccessPolicyDeleteNotFoundIsNotAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceDefaultAccessPolicy().Schema, map[string]interface{}{
+		"resource_type": "ldap",
+	})
+	d.SetId("ldap")
+
+	require.NoError(t, resourceDefaultAccessPolicyDelete(d, config))
+	assert.Equal(t, "", d.Id())
+}

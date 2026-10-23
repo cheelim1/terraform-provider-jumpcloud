@@ -140,3 +140,74 @@ func TestResourceMfaFactorDeleteDisables(t *testing.T) {
 	assert.Equal(t, false, gotBody["enabled"])
 	assert.Equal(t, "", d.Id())
 }
+
+// A read_only factor can't be disabled, so destroy must not attempt the write
+// (which the API would reject, blocking destroy forever).
+func TestResourceMfaFactorDeleteSkipsWriteWhenReadOnly(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceMfaFactor().Schema, map[string]interface{}{
+		"factor_type": "totp",
+		"enabled":     true,
+	})
+	require.NoError(t, d.Set("read_only", true))
+	d.SetId("totp")
+
+	require.NoError(t, resourceMfaFactorDelete(d, config))
+	assert.Equal(t, 0, requests, "no write may be sent for a read_only factor")
+	assert.Equal(t, "", d.Id())
+}
+
+func TestResourceMfaFactorDeleteNotFoundIsNotAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceMfaFactor().Schema, map[string]interface{}{
+		"factor_type": "sms",
+	})
+	d.SetId("sms")
+
+	require.NoError(t, resourceMfaFactorDelete(d, config))
+	assert.Equal(t, "", d.Id())
+}
+
+func TestResourceMfaFactorDeleteStillFailsOnOtherErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer server.Close()
+
+	config := jcapiv2.NewConfiguration()
+	config.BasePath = server.URL
+	config.AddDefaultHeader("x-api-key", "test-key")
+
+	d := schema.TestResourceDataRaw(t, resourceMfaFactor().Schema, map[string]interface{}{
+		"factor_type": "webauthn",
+	})
+	d.SetId("webauthn")
+
+	err := resourceMfaFactorDelete(d, config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+	assert.Equal(t, "webauthn", d.Id(), "a failed destroy must keep the resource in state")
+}
+
+func TestResourceMfaFactorDescriptionDisclosesDestroyBehavior(t *testing.T) {
+	assert.Contains(t, resourceMfaFactor().Description, "destroying this resource disables the factor type")
+}

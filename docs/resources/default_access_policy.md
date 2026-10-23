@@ -26,7 +26,7 @@ Warning: destroying this resource relaxes authentication. JumpCloud always has o
 
 - `effect_action` (String) The fallback policy's base access decision. Confirmed live value: "allow".
 - `mfa_required` (Boolean) Require MFA under this fallback policy.
-- `user_verification` (String) WebAuthn-style user verification requirement: "discouraged", "preferred", or "required" (values confirmed on jumpcloud_authentication_policy and jumpcloud_push_settings; not independently varied for this resource during capture -- only "none" was observed).
+- `user_verification` (String) User verification requirement for this fallback policy. Only "none" (the default) was observed in a live capture; other values (jumpcloud_push_settings accepts "discouraged", "preferred", and "required") are not confirmed for this resource -- verify live before relying on them.
 
 ### Read-Only
 

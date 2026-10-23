@@ -5,6 +5,7 @@ import (
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
 
 // mfaEnrollmentPolicyID is a fixed, synthetic Terraform resource id: the
@@ -35,7 +36,11 @@ func resourceMfaEnrollmentPolicy() *schema.Resource {
 			"before enforcement begins. Built from a captured browser request " +
 			"against JumpCloud's \"MFA Configurations\" admin page -- not " +
 			"documented anywhere else, including this provider's Go SDK and " +
-			"JumpCloud's own actively maintained CLI.",
+			"JumpCloud's own actively maintained CLI.\n\n" +
+			"Warning: destroying this resource relaxes MFA enrollment. The " +
+			"enrollment policy is a singleton that always exists, so destroy " +
+			"resets it to JumpCloud's default (no primary or backup factor " +
+			"required, grace period 0) rather than just ceasing to manage it.",
 		Create: resourceMfaEnrollmentPolicyCreateUpdate,
 		Read:   resourceMfaEnrollmentPolicyRead,
 		Update: resourceMfaEnrollmentPolicyCreateUpdate,
@@ -54,9 +59,10 @@ func resourceMfaEnrollmentPolicy() *schema.Resource {
 			"grace_period_days": {
 				Description: "Days a user has to enroll a factor before " +
 					"enforcement begins.",
-				Type:     schema.TypeInt,
-				Optional: true,
-				Default:  0,
+				Type:         schema.TypeInt,
+				Optional:     true,
+				Default:      0,
+				ValidateFunc: validation.IntAtLeast(0),
 			},
 			"require_backup_factor": {
 				Description: "Require every user to also enroll a backup " +

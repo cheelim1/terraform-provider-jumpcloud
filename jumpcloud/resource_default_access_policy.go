@@ -6,7 +6,13 @@ import (
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
+
+// defaultAccessPolicyResourceTypes are the fallback policies JumpCloud keeps,
+// one per resource type (all four confirmed live). Anything else 404s on the
+// PUT, so it is rejected at plan time instead.
+var defaultAccessPolicyResourceTypes = []string{"application", "userportal", "adminportal", "ldap"}
 
 // resourceDefaultAccessPolicy manages one of JumpCloud's four fallback access
 // policies -- the "Default Access Policy Settings" section of the MFA
@@ -51,9 +57,10 @@ func resourceDefaultAccessPolicy() *schema.Resource {
 				Description: "Which fallback policy to manage: \"application\", " +
 					"\"userportal\", \"adminportal\", or \"ldap\" (all four " +
 					"confirmed live).",
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+				Type:         schema.TypeString,
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validation.StringInSlice(defaultAccessPolicyResourceTypes, false),
 			},
 			"effect_action": {
 				Description: "The fallback policy's base access decision. " +
@@ -69,11 +76,11 @@ func resourceDefaultAccessPolicy() *schema.Resource {
 				Default:     false,
 			},
 			"user_verification": {
-				Description: "WebAuthn-style user verification requirement: " +
-					"\"discouraged\", \"preferred\", or \"required\" (values " +
-					"confirmed on jumpcloud_authentication_policy and " +
-					"jumpcloud_push_settings; not independently varied for this " +
-					"resource during capture -- only \"none\" was observed).",
+				Description: "User verification requirement for this fallback " +
+					"policy. Only \"none\" (the default) was observed in a live " +
+					"capture; other values (jumpcloud_push_settings accepts " +
+					"\"discouraged\", \"preferred\", and \"required\") are not " +
+					"confirmed for this resource -- verify live before relying on them.",
 				Type:     schema.TypeString,
 				Optional: true,
 				Default:  "none",
@@ -128,27 +135,19 @@ func resourceDefaultAccessPolicyRead(d *schema.ResourceData, meta interface{}) e
 	if err := d.Set("resource_type", d.Id()); err != nil {
 		return err
 	}
-	if effect, ok := raw["effect"].(map[string]interface{}); ok {
-		if v, ok := effect["action"].(string); ok {
-			if err := d.Set("effect_action", v); err != nil {
-				return err
-			}
-		}
-		if obligations, ok := effect["obligations"].(map[string]interface{}); ok {
-			if mfa, ok := obligations["mfa"].(map[string]interface{}); ok {
-				if v, ok := mfa["required"].(bool); ok {
-					if err := d.Set("mfa_required", v); err != nil {
-						return err
-					}
-				}
-			}
-			if uv, ok := obligations["userVerification"].(map[string]interface{}); ok {
-				if v, ok := uv["requirement"].(string); ok {
-					if err := d.Set("user_verification", v); err != nil {
-						return err
-					}
-				}
-			}
+	// Set unconditionally, defaulting when the response omits a field, so a
+	// missing field can't leave a stale value in state.
+	effect, _ := raw["effect"].(map[string]interface{})
+	obligations, _ := effect["obligations"].(map[string]interface{})
+	mfa, _ := obligations["mfa"].(map[string]interface{})
+	uv, _ := obligations["userVerification"].(map[string]interface{})
+	for k, v := range map[string]interface{}{
+		"effect_action":     stringOr(effect["action"], "allow"),
+		"mfa_required":      boolOr(mfa["required"], false),
+		"user_verification": stringOr(uv["requirement"], "none"),
+	} {
+		if err := d.Set(k, v); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -172,7 +171,7 @@ func resourceDefaultAccessPolicyDelete(d *schema.ResourceData, meta interface{})
 		},
 	}
 	headers := config.DefaultHeader
-	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/authn/policy/fallback/"+resourceType, body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPut, config.BasePath, headers, "/authn/policy/fallback/"+resourceType, body); err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	d.SetId("")
