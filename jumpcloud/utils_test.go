@@ -32,7 +32,7 @@ func TestApplicationGetRawSendsConfiguredHeaders(t *testing.T) {
 	}
 }
 
-func TestJcRawRequestOmitsUnsetHeaders(t *testing.T) {
+func TestApplicationRawRequestOmitsUnsetHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, present := r.Header["X-Org-Id"]; present {
 			t.Errorf("x-org-id must not be sent when unset")

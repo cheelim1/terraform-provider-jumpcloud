@@ -22,13 +22,20 @@ import (
 // has been deleted outside Terraform.
 var ErrApplicationNotFound = errors.New("application not found")
 
-// jcRawRequest builds a request for the raw helpers below, carrying the
+// applicationRequestTimeout bounds every request made through
+// applicationRawRequest. The raw helpers take no cancellation context, so
+// without a timeout a server that accepts the connection but stalls would
+// leave refresh/apply waiting forever while Terraform holds its state lock.
+// A var so tests can shorten it.
+var applicationRequestTimeout = 30 * time.Second
+
+// applicationRawRequest builds a request for the raw application helpers below, carrying the
 // provider configuration's default headers (x-api-key and, when configured,
 // x-org-id) so raw calls are scoped to the same organization as SDK calls.
 // Debug logging is deliberately off: resty's debug output includes request
 // headers, which would write the x-api-key to the TF_LOG output.
-func jcRawRequest(headers map[string]string) *resty.Request {
-	req := resty.New().R().SetHeader("Accept", "application/json")
+func applicationRawRequest(headers map[string]string) *resty.Request {
+	req := resty.New().SetTimeout(applicationRequestTimeout).R().SetHeader("Accept", "application/json")
 	for k, v := range headers {
 		if v != "" {
 			req.SetHeader(k, v)
@@ -45,7 +52,7 @@ func jcRawRequest(headers map[string]string) *resty.Request {
 // generated SDK types, so client.ApplicationsApi.ApplicationsGet silently drops
 // them when unmarshaling into the typed struct.
 func ApplicationGetRaw(basePath string, headers map[string]string, applicationId string) (map[string]interface{}, error) {
-	resp, err := jcRawRequest(headers).Get(basePath + "/applications/" + applicationId)
+	resp, err := applicationRawRequest(headers).Get(basePath + "/applications/" + applicationId)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +76,7 @@ func ApplicationGetRaw(basePath string, headers map[string]string, applicationId
 // ApplicationGetRaw bypasses the generated client: the typed Application/
 // ApplicationConfig structs can't represent the fields this resource now manages.
 func applicationWriteRaw(method, basePath string, headers map[string]string, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	req := jcRawRequest(headers).
+	req := applicationRawRequest(headers).
 		SetHeader("Content-Type", "application/json").
 		SetBody(body)
 
