@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
@@ -100,8 +101,15 @@ func resourceUser() *schema.Resource {
 
 // We receive a v2config from the TF base code but need a v1config to continue. So, we take the only
 // preloaded element (the x-api-key) and populate the v1config with it.
+//
+// BasePath is derived from v2config's, not left at jcapiv1's own default: the
+// two SDKs' real-world defaults differ only by a trailing "/v2"
+// ("https://console.jumpcloud.com/api/v2" vs ".../api"), so trimming that
+// suffix reproduces the real v1 base path in production while passing a
+// test's mock server URL through unchanged (it has no such suffix to trim).
 func convertV2toV1Config(v2config *jcapiv2.Configuration) *jcapiv1.Configuration {
 	configv1 := jcapiv1.NewConfiguration()
+	configv1.BasePath = strings.TrimSuffix(v2config.BasePath, "/v2")
 	configv1.AddDefaultHeader("x-api-key", v2config.DefaultHeader["x-api-key"])
 	if v2config.DefaultHeader["x-org-id"] != "" {
 		configv1.AddDefaultHeader("x-org-id", v2config.DefaultHeader["x-org-id"])

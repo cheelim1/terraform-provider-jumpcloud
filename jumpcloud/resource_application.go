@@ -43,13 +43,13 @@ func resourceApplication() *schema.Resource {
 			},
 			"active": {
 				Description: "Whether single sign-on is active for this application. JumpCloud " +
-					"shows an inactive application as \"Single Sign-On Inactive\" in the console. " +
-					"Defaults to false to match this resource's existing behavior (it never set " +
-					"this field before, so it was always left at JumpCloud's own default, " +
-					"inactive) -- set explicitly to true to activate SSO.",
+					"shows an inactive application as \"Single Sign-On Inactive\" in the console " +
+					"and creates new applications inactive. Omit it to leave the current state " +
+					"unchanged (for example SSO activated in the console); set true or false to " +
+					"manage it.",
 				Type:     schema.TypeBool,
 				Optional: true,
-				Default:  false,
+				Computed: true,
 			},
 			"display_label": {
 				Description: "Name of the application to display",
@@ -103,9 +103,12 @@ func resourceApplication() *schema.Resource {
 					"service provider. `name` is the attribute name the service provider expects " +
 					"(e.g. \"email\", \"firstName\", \"lastName\"); `value` is the corresponding " +
 					"JumpCloud user profile property name (e.g. \"email\", \"firstname\", " +
-					"\"lastname\") -- confirmed against a captured browser request.",
+					"\"lastname\") -- confirmed against a captured browser request. Omit the " +
+					"block entirely to leave the mappings configured in JumpCloud unchanged; " +
+					"once set, the configured rows replace the existing ones.",
 				Type:     schema.TypeList,
 				Optional: true,
+				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"name": {
@@ -123,35 +126,37 @@ func resourceApplication() *schema.Resource {
 			},
 			"include_groups": {
 				Description: "Include the user's JumpCloud group memberships as a SAML attribute, " +
-					"named by groups_attribute_name.",
+					"named by groups_attribute_name. Omit it to leave whatever is configured in JumpCloud unchanged.",
 				Type:     schema.TypeBool,
 				Optional: true,
-				Default:  false,
+				Computed: true,
 			},
 			"groups_attribute_name": {
 				Description: "The SAML attribute name used for group memberships. Only meaningful " +
-					"when include_groups is true.",
+					"when include_groups is true. Omit it to leave whatever is configured in JumpCloud unchanged.",
 				Type:     schema.TypeString,
 				Optional: true,
+				Computed: true,
 			},
 			"sign_assertion": {
-				Description: "Sign the SAML assertion. Matches the saml2 template's own default (true).",
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     true,
+				Description: "Sign the SAML assertion (JumpCloud's default for new SAML " +
+					"applications is true). Omit it to leave whatever is configured in JumpCloud unchanged.",
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
 			},
 			"sign_response": {
-				Description: "Sign the SAML response.",
+				Description: "Sign the SAML response. Omit it to leave whatever is configured in JumpCloud unchanged.",
 				Type:        schema.TypeBool,
 				Optional:    true,
-				Default:     false,
+				Computed:    true,
 			},
 			"declare_redirect_endpoint": {
 				Description: "Declare an HTTP-Redirect binding endpoint in the IdP metadata. Some " +
-					"service providers (e.g. Claude) require this to be set.",
+					"service providers (e.g. Claude) require this to be set. Omit it to leave whatever is configured in JumpCloud unchanged.",
 				Type:     schema.TypeBool,
 				Optional: true,
-				Default:  false,
+				Computed: true,
 			},
 			"idp_certificate": {
 				Description: "Leave unset to have JumpCloud generate and manage its own signing " +
@@ -198,8 +203,9 @@ func resourceApplication() *schema.Resource {
 func resourceApplicationCreate(d *schema.ResourceData, meta interface{}) error {
 	configv1 := convertV2toV1Config(meta.(*jcapiv2.Configuration))
 
+	// The body is deliberately not logged: it carries idp_private_key (and
+	// idp_certificate), which would otherwise end up in TF_LOG output.
 	body := buildApplicationRequestBody(nil, d)
-	log.Println("[INFO] body=", body)
 
 	result, err := ApplicationCreateRaw(configv1.BasePath, configv1.DefaultHeader, body)
 	if err != nil {
@@ -207,6 +213,9 @@ func resourceApplicationCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	id, _ := result["_id"].(string)
+	if id == "" {
+		return fmt.Errorf("application created but no _id was returned")
+	}
 	log.Println("[INFO] id=", id)
 	d.SetId(id)
 	return resourceApplicationRead(d, meta)
@@ -226,8 +235,13 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	id, _ := raw["_id"].(string)
-	d.SetId(id)
+	// A successful GET of /applications/{id} is that application; don't let a
+	// response that omits _id drop it from state.
+	id := d.Id()
+	if v, _ := raw["_id"].(string); v != "" {
+		id = v
+		d.SetId(id)
+	}
 
 	if v, ok := raw["name"].(string); ok {
 		if err := d.Set("name", v); err != nil {
@@ -393,7 +407,23 @@ func buildApplicationRequestBody(seed map[string]interface{}, d *schema.Resource
 	body["displayLabel"] = d.Get("display_label").(string)
 	body["ssoUrl"] = d.Get("sso_url").(string)
 	body["beta"] = d.Get("beta").(bool)
-	body["active"] = d.Get("active").(bool)
+
+	// The settings #30 added (active and the SAML options below) were never
+	// managed before, so existing applications may have them configured in the
+	// console. They are Optional+Computed and only written when the user sets
+	// them (Create) or changes them (Update); otherwise the current value --
+	// from seed on Update, JumpCloud's own default on Create -- is left alone.
+	isCreate := seed == nil
+	manages := func(key string) bool {
+		if isCreate {
+			_, ok := d.GetOkExists(key)
+			return ok
+		}
+		return d.HasChange(key)
+	}
+	if manages("active") {
+		body["active"] = d.Get("active").(bool)
+	}
 
 	cfg, ok := body["config"].(map[string]interface{})
 	if !ok {
@@ -418,13 +448,25 @@ func buildApplicationRequestBody(seed map[string]interface{}, d *schema.Resource
 	}
 
 	cfg["constantAttributes"] = attributeRowsField(d, "constant_attributes", "Constant Attributes:", 8)
-	cfg["databaseAttributes"] = databaseAttributesField(d)
+	if manages("database_attributes") {
+		cfg["databaseAttributes"] = databaseAttributesField(d)
+	}
 
-	setConfigField(cfg, "includeGroups", "bool", "Include Group Attribute", d.Get("include_groups").(bool), false, 10)
-	setConfigField(cfg, "groupsAttributeName", "text", "Groups Attribute Name", d.Get("groups_attribute_name").(string), false, 11)
-	setConfigField(cfg, "signAssertion", "bool", "Sign Assertion", d.Get("sign_assertion").(bool), false, 13)
-	setConfigField(cfg, "signResponse", "bool", "Sign Response", d.Get("sign_response").(bool), false, 13)
-	setConfigField(cfg, "declareRedirectEndpoint", "bool", "Declare Redirect Endpoint", d.Get("declare_redirect_endpoint").(bool), false, 16)
+	if manages("include_groups") {
+		setConfigField(cfg, "includeGroups", "bool", "Include Group Attribute", d.Get("include_groups").(bool), false, 10)
+	}
+	if manages("groups_attribute_name") {
+		setConfigField(cfg, "groupsAttributeName", "text", "Groups Attribute Name", d.Get("groups_attribute_name").(string), false, 11)
+	}
+	if manages("sign_assertion") {
+		setConfigField(cfg, "signAssertion", "bool", "Sign Assertion", d.Get("sign_assertion").(bool), false, 13)
+	}
+	if manages("sign_response") {
+		setConfigField(cfg, "signResponse", "bool", "Sign Response", d.Get("sign_response").(bool), false, 13)
+	}
+	if manages("declare_redirect_endpoint") {
+		setConfigField(cfg, "declareRedirectEndpoint", "bool", "Declare Redirect Endpoint", d.Get("declare_redirect_endpoint").(bool), false, 16)
+	}
 
 	return body
 }
