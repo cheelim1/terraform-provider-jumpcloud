@@ -14,10 +14,27 @@ Provides a resource for adding an Amazon Web Services (AWS) account application
 
 ```terraform
 resource "jumpcloud_application" "example" {
-  display_label        = "My AWS Account"
-  sso_url              = "https://sso.jumpcloud.com/saml2/example-application"
-  saml_role_attribute  = "arn:aws:iam::AWS_ACCOUNT_ID:role/MY_ROLE,arn:aws:iam::AWS_ACCOUNT_ID:saml-provider/MY_SAML_PROVIDER"
-  aws_session_duration = 432000
+  name          = "aws"
+  display_label = "My AWS Account"
+  sso_url       = "my-aws-account"
+  idp_entity_id = "JumpCloud"
+  sp_entity_id  = "urn:amazon:webservices"
+  acs_url       = "https://signin.aws.amazon.com/saml"
+
+  # Optional SAML settings. Omit any of them to leave whatever is
+  # configured in the JumpCloud console unchanged.
+  active         = true
+  sign_assertion = true
+
+  database_attributes {
+    name  = "email"
+    value = "email"
+  }
+
+  constant_attributes {
+    name  = "https://aws.amazon.com/SAML/Attributes/SessionDuration"
+    value = "3600"
+  }
 }
 ```
 
@@ -28,18 +45,25 @@ resource "jumpcloud_application" "example" {
 
 - `acs_url` (String)
 - `display_label` (String) Name of the application to display
-- `idp_certificate` (String, Sensitive)
 - `idp_entity_id` (String)
-- `idp_private_key` (String, Sensitive)
 - `name` (String) Name of the application
 - `sp_entity_id` (String)
 - `sso_url` (String) The SSO URL suffix to use
 
 ### Optional
 
+- `active` (Boolean) Whether single sign-on is active for this application. JumpCloud shows an inactive application as "Single Sign-On Inactive" in the console and creates new applications inactive. Omit it to leave the current state unchanged (for example SSO activated in the console); set true or false to manage it.
 - `beta` (Boolean)
 - `constant_attributes` (Block List) (see [below for nested schema](#nestedblock--constant_attributes))
+- `database_attributes` (Block List) Maps JumpCloud user profile fields to attribute names sent to the service provider. `name` is the attribute name the service provider expects (e.g. "email", "firstName", "lastName"); `value` is the corresponding JumpCloud user profile property name (e.g. "email", "firstname", "lastname") -- confirmed against a captured browser request. Omit the block entirely to leave the mappings configured in JumpCloud unchanged; once set, the configured rows replace the existing ones. (see [below for nested schema](#nestedblock--database_attributes))
+- `declare_redirect_endpoint` (Boolean) Declare an HTTP-Redirect binding endpoint in the IdP metadata. Some service providers (e.g. Claude) require this to be set. Omit it to leave whatever is configured in JumpCloud unchanged.
+- `groups_attribute_name` (String) The SAML attribute name used for group memberships. Only meaningful when include_groups is true. Omit it to leave whatever is configured in JumpCloud unchanged.
+- `idp_certificate` (String, Sensitive) Leave unset to have JumpCloud generate and manage its own signing certificate -- confirmed against the live API as the correct way to use this resource; a self-supplied certificate is stored as an opaque string and causes the metadata-XML endpoint to fail with a 500 for every request. Set only if you specifically need to supply your own IdP keypair instead.
+- `idp_private_key` (String, Sensitive) Leave unset -- see idp_certificate. Never refreshed by Read even if set: the API always returns this field empty regardless of what's stored.
+- `include_groups` (Boolean) Include the user's JumpCloud group memberships as a SAML attribute, named by groups_attribute_name. Omit it to leave whatever is configured in JumpCloud unchanged.
 - `learn_more` (String)
+- `sign_assertion` (Boolean) Sign the SAML assertion (JumpCloud's default for new SAML applications is true). Omit it to leave whatever is configured in JumpCloud unchanged.
+- `sign_response` (Boolean) Sign the SAML response. Omit it to leave whatever is configured in JumpCloud unchanged.
 
 ### Read-Only
 
@@ -60,4 +84,10 @@ Optional:
 - `required` (Boolean)
 - `visible` (Boolean)
 
+<a id="nestedblock--database_attributes"></a>
+### Nested Schema for `database_attributes`
 
+Required:
+
+- `name` (String) The attribute name sent to the service provider.
+- `value` (String) The JumpCloud user profile property name.
