@@ -169,3 +169,11 @@ func TestResourceWebauthnSettingsDeleteNotFoundIsNotAnError(t *testing.T) {
 	require.NoError(t, resourceWebauthnSettingsDelete(d, config))
 	assert.Equal(t, "", d.Id())
 }
+
+// Destroy writes allowSelfRegistration = false rather than just untracking the
+// config, so the resource description (and the generated docs) must say so.
+func TestResourceWebauthnSettingsDescriptionDisclosesDestroyBehavior(t *testing.T) {
+	desc := resourceWebauthnSettings().Description
+	assert.Contains(t, desc, "destroying this resource turns security key self-registration off")
+	assert.Contains(t, desc, "resets the setting to false")
+}

@@ -4,11 +4,14 @@ page_title: "jumpcloud_webauthn_settings Resource - terraform-provider-jumpcloud
 subcategory: ""
 description: |-
   Manages JumpCloud's org-wide WebAuthn configuration. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page (WebAuthn's "Additional Settings" section) -- not documented anywhere else.
+  Warning: destroying this resource turns security key self-registration off. The WebAuthn config is a JumpCloud-created object that always exists, so destroy resets the setting to false rather than just ceasing to manage it; users can no longer register their own security keys.
 ---
 
 # jumpcloud_webauthn_settings (Resource)
 
 Manages JumpCloud's org-wide WebAuthn configuration. Built from a captured browser request against JumpCloud's "MFA Configurations" admin page (WebAuthn's "Additional Settings" section) -- not documented anywhere else.
+
+Warning: destroying this resource turns security key self-registration off. The WebAuthn config is a JumpCloud-created object that always exists, so destroy resets the setting to false rather than just ceasing to manage it; users can no longer register their own security keys.
 
 
 
