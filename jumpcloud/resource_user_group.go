@@ -99,6 +99,9 @@ func resourceUserGroupCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	id, _ := group["id"].(string)
+	if id == "" {
+		return fmt.Errorf("user group %s was created but no id was returned: %+v", body["name"], group)
+	}
 	d.SetId(id)
 
 	memberIds, err := userEmailsToIDs(config, d.Get("members").([]interface{}))
@@ -133,7 +136,11 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 		return nil
 	}
 
-	d.SetId(group.ID)
+	// A successful GET of /usergroups/{id} is that group; don't let a response
+	// that omits the id drop it from state.
+	if group.ID != "" {
+		d.SetId(group.ID)
+	}
 	if err := d.Set("name", group.Name); err != nil {
 		return err
 	}

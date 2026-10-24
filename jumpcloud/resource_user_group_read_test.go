@@ -40,6 +40,44 @@ func TestResourceUserGroupReadFailsOnNonNotFoundError(t *testing.T) {
 	}
 }
 
+// Create must not track a group under an empty id: it exists in JumpCloud, and
+// Terraform would lose it.
+func TestResourceUserGroupCreateRequiresId(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"group"}`)) // a successful POST response with no id
+	}))
+	defer server.Close()
+
+	d := schema.TestResourceDataRaw(t, resourceUserGroup().Schema, map[string]interface{}{"name": "group"})
+
+	err := resourceUserGroupCreate(d, userGroupTestConfig(server.URL))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no id was returned")
+	assert.Equal(t, "", d.Id())
+}
+
+// A successful GET of /usergroups/{id} is that group, even if the response
+// omits the id: Read must not drop it from state.
+func TestResourceUserGroupReadKeepsIdWhenResponseOmitsIt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/usergroups/g1/members" {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"renamed"}`))
+	}))
+	defer server.Close()
+
+	d := schema.TestResourceDataRaw(t, resourceUserGroup().Schema, map[string]interface{}{"name": "group"})
+	d.SetId("g1")
+
+	require.NoError(t, resourceUserGroupRead(d, userGroupTestConfig(server.URL)))
+	assert.Equal(t, "g1", d.Id())
+	assert.Equal(t, "renamed", d.Get("name"))
+}
+
 func TestResourceUserGroupReadNotFoundClearsId(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
