@@ -38,7 +38,7 @@ output "group_id" {
 ### Optional
 
 - `attributes` (Map of String)
-- `custom_attributes` (Map of String) String-valued custom attributes on the group, which members inherit (e.g. for SSO attribute mappings). When set, this is authoritative over the group's string-valued custom attributes; non-string ones set in the console are left untouched.
+- `custom_attributes` (Map of String) String-valued custom attributes on the group, which members inherit (e.g. for SSO attribute mappings). When set, this is authoritative over the group's string-valued custom attributes; non-string ones set in the console are left untouched. Omit it to leave the group's custom attributes unchanged, or set it to an empty map (`{}`) to remove all of the string-valued ones. JumpCloud's built-in attribute names (ldapGroups, posixGroups, radius, sambaEnabled, sudo) can't be used as custom attribute names.
 - `members` (Map of String) This is a set of user emails associated with this group
 
 ### Read-Only
