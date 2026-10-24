@@ -1,13 +1,12 @@
 package jumpcloud
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"io"
 	"net/http"
 	"slices"
 )
@@ -94,7 +93,7 @@ func resourceUserGroupCreate(d *schema.ResourceData, m interface{}) error {
 		"name":       d.Get("name").(string),
 		"attributes": attrs,
 	}
-	group, err := userGroupRaw(config, http.MethodPost, "/usergroups", body)
+	group, err := jcWriteRaw(http.MethodPost, config.BasePath, config.DefaultHeader, "/usergroups", body)
 	if err != nil {
 		return fmt.Errorf("error creating user group %s: %s", body["name"], err)
 	}
@@ -161,48 +160,34 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
+// userGroupReadHelper fetches a group through the shared raw helpers, which
+// send every configured default header, bound the request with a timeout, and
+// return an error for any non-2xx response. Only a 404 means the group is gone
+// (ok == false); every other failure -- auth, outage, malformed body -- is an
+// error, so a failed refresh can't be mistaken for an empty or deleted group.
 func userGroupReadHelper(config *jcapiv2.Configuration, id string) (ug *UserGroup,
 	ok bool, err error) {
 
-	req, err := http.NewRequest(http.MethodGet,
-		config.BasePath+"/usergroups/"+id, nil)
+	raw, err := jcGetRaw(config.BasePath, config.DefaultHeader, "/usergroups/"+id)
 	if err != nil {
-		return
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
 
-	req.Header.Add("x-api-key", config.DefaultHeader["x-api-key"])
-	if config.DefaultHeader["x-org-id"] != "" {
-		req.Header.Add("x-org-id", config.DefaultHeader["x-org-id"])
-	}
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
-
-	res, err := http.DefaultClient.Do(req)
+	encoded, err := json.Marshal(raw)
 	if err != nil {
-		return
+		return nil, false, err
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode == http.StatusNotFound {
-		return
+	ug = &UserGroup{}
+	if err := json.Unmarshal(encoded, ug); err != nil {
+		return nil, false, fmt.Errorf("error decoding user group %s: %w", id, err)
 	}
-
-	ok = true
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return
-	}
-	if err = json.Unmarshal(raw, &ug); err != nil || ug == nil {
-		return
-	}
-	// The typed decode above drops custom attributes, which jcapi-go's model
-	// doesn't know about; keep the untyped attributes object too.
-	var untyped struct {
-		Attributes map[string]interface{} `json:"attributes"`
-	}
-	err = json.Unmarshal(raw, &untyped)
-	ug.RawAttributes = untyped.Attributes
-	return
+	// The typed decode drops custom attributes, which jcapi-go's model doesn't
+	// know about; keep the untyped attributes object too.
+	ug.RawAttributes, _ = raw["attributes"].(map[string]interface{})
+	return ug, true, nil
 }
 
 func resourceUserGroupUpdate(d *schema.ResourceData, m interface{}) error {
@@ -213,7 +198,7 @@ func resourceUserGroupUpdate(d *schema.ResourceData, m interface{}) error {
 	// clears any top-level field (e.g. description) or attributes key (e.g. a
 	// custom attribute) the request omits. So start from the group's full
 	// current state and change only the fields this resource manages.
-	body, err := userGroupRaw(config, http.MethodGet, "/usergroups/"+d.Id(), nil)
+	body, err := jcGetRaw(config.BasePath, config.DefaultHeader, "/usergroups/"+d.Id())
 	if err != nil {
 		return fmt.Errorf("error reading user group %s before update: %s", d.Id(), err)
 	}
@@ -233,7 +218,7 @@ func resourceUserGroupUpdate(d *schema.ResourceData, m interface{}) error {
 	oldCustom, newCustom := d.GetChange("custom_attributes")
 	applyCustomAttributes(attrs, oldCustom.(map[string]interface{}), newCustom.(map[string]interface{}))
 
-	if _, err := userGroupRaw(config, http.MethodPatch, "/usergroups/"+d.Id(), body); err != nil {
+	if _, err := jcWriteRaw(http.MethodPatch, config.BasePath, config.DefaultHeader, "/usergroups/"+d.Id(), body); err != nil {
 		return fmt.Errorf("error updating user group %s: %s", d.Id(), err)
 	}
 
@@ -282,51 +267,4 @@ func resourceUserGroupDelete(d *schema.ResourceData, m interface{}) error {
 	}
 	d.SetId("")
 	return nil
-}
-
-// userGroupRaw sends a raw JSON request to a v2 user group endpoint. Unlike
-// jcGetRaw/jcWriteRaw, it sends every configured default header -- notably
-// x-org-id, which multi-tenant organizations need and which the SDK calls this
-// replaces always sent.
-func userGroupRaw(config *jcapiv2.Configuration, method, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	var reqBody io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		reqBody = bytes.NewReader(encoded)
-	}
-
-	req, err := http.NewRequest(method, config.BasePath+path, reqBody)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range config.DefaultHeader {
-		if v != "" {
-			req.Header.Set(k, v)
-		}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	if res.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s %s: %s; body: %s", method, path, res.Status, bytes.TrimSpace(raw))
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("error decoding response from %s %s: %w", method, path, err)
-	}
-	return result, nil
 }
