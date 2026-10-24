@@ -272,7 +272,9 @@ func resourceUserGroupDelete(d *schema.ResourceData, m interface{}) error {
 
 	res, err := client.UserGroupsApi.GroupsUserDelete(context.TODO(),
 		d.Id(), "", headerAccept, nil)
-	if err != nil {
+	// A group that's already gone (e.g. deleted in the console) is the desired
+	// end state, so don't fail destroy -- or block it forever -- over a 404.
+	if err != nil && !isNotFound(res, err) {
 		// TODO: sort out error essentials
 		return fmt.Errorf("error deleting user group:%s; response = %+v", err, res)
 	}
