@@ -18,6 +18,103 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
+// ErrApplicationNotFound is returned by ApplicationGetRaw when the application
+// has been deleted outside Terraform.
+var ErrApplicationNotFound = errors.New("application not found")
+
+// applicationRequestTimeout bounds every request made through
+// applicationRawRequest. The raw helpers take no cancellation context, so
+// without a timeout a server that accepts the connection but stalls would
+// leave refresh/apply waiting forever while Terraform holds its state lock.
+// A var so tests can shorten it.
+var applicationRequestTimeout = 30 * time.Second
+
+// applicationRawRequest builds a request for the raw application helpers below, carrying the
+// provider configuration's default headers (x-api-key and, when configured,
+// x-org-id) so raw calls are scoped to the same organization as SDK calls.
+// Debug logging is deliberately off: resty's debug output includes request
+// headers, which would write the x-api-key to the TF_LOG output.
+func applicationRawRequest(headers map[string]string) *resty.Request {
+	req := resty.New().SetTimeout(applicationRequestTimeout).R().SetHeader("Accept", "application/json")
+	for k, v := range headers {
+		if v != "" {
+			req.SetHeader(k, v)
+		}
+	}
+	return req
+}
+
+// ApplicationGetRaw fetches the full, raw JSON representation of an application.
+// Needed because jcapiv1.ApplicationConfig only models a small subset of the real
+// config object -- confirmed via a captured browser request, which showed fields
+// (databaseAttributes rows, signAssertion, signResponse, declareRedirectEndpoint,
+// includeGroups, groupsAttributeName, and more) that don't exist anywhere in the
+// generated SDK types, so client.ApplicationsApi.ApplicationsGet silently drops
+// them when unmarshaling into the typed struct.
+func ApplicationGetRaw(basePath string, headers map[string]string, applicationId string) (map[string]interface{}, error) {
+	resp, err := applicationRawRequest(headers).Get(basePath + "/applications/" + applicationId)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode() == http.StatusNotFound {
+		return nil, ErrApplicationNotFound
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error getting application %s: %s; body: %s",
+			applicationId, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, fmt.Errorf("error decoding application %s: %w", applicationId, err)
+	}
+	return result, nil
+}
+
+// applicationWriteRaw POSTs or PUTs a raw application body, for the same reason
+// ApplicationGetRaw bypasses the generated client: the typed Application/
+// ApplicationConfig structs can't represent the fields this resource now manages.
+func applicationWriteRaw(method, basePath string, headers map[string]string, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	req := applicationRawRequest(headers).
+		SetHeader("Content-Type", "application/json").
+		SetBody(body)
+
+	var resp *resty.Response
+	var err error
+	switch method {
+	case http.MethodPost:
+		resp, err = req.Post(basePath + path)
+	case http.MethodPut:
+		resp, err = req.Put(basePath + path)
+	default:
+		return nil, fmt.Errorf("applicationWriteRaw: unsupported method %s", method)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("error %s %s: %s; body: %s",
+			method, path, resp.Status(), strings.TrimSpace(string(resp.Body())))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, fmt.Errorf("error decoding response from %s %s: %w", method, path, err)
+	}
+	return result, nil
+}
+
+// ApplicationCreateRaw creates an application from a raw request body.
+func ApplicationCreateRaw(basePath string, headers map[string]string, body map[string]interface{}) (map[string]interface{}, error) {
+	return applicationWriteRaw(http.MethodPost, basePath, headers, "/applications", body)
+}
+
+// ApplicationUpdateRaw updates an application from a raw request body.
+func ApplicationUpdateRaw(basePath string, headers map[string]string, applicationId string, body map[string]interface{}) (map[string]interface{}, error) {
+	return applicationWriteRaw(http.MethodPut, basePath, headers, "/applications/"+applicationId, body)
+}
+
 const metadataXmlTimeout = 30 * time.Second
 
 // rawRequestTimeout bounds every request made through jcRawRequest. The raw
