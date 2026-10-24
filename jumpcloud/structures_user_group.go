@@ -4,6 +4,7 @@ package jumpcloud
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -81,6 +82,41 @@ var systemGroupAttributes = map[string]bool{
 	"sudo":         true,
 	"radius":       true,
 	"sambaEnabled": true,
+}
+
+// validateCustomAttributeKeys rejects custom attribute names that can't work:
+// the group's built-in attribute keys, which JumpCloud owns (applyCustomAttributes
+// never writes them and flattenCustomAttributes never reads them, so accepting
+// one would apply "successfully" and then plan the same change forever), and
+// empty names.
+func validateCustomAttributeKeys(v interface{}, k string) (warnings []string, errs []error) {
+	attrs, ok := v.(map[string]interface{})
+	if !ok {
+		return
+	}
+	keys := make([]string, 0, len(attrs))
+	for name := range attrs {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	builtin := make([]string, 0, len(systemGroupAttributes))
+	for name := range systemGroupAttributes {
+		builtin = append(builtin, name)
+	}
+	sort.Strings(builtin)
+
+	for _, name := range keys {
+		switch {
+		case name == "":
+			errs = append(errs, fmt.Errorf("%s: custom attribute names must not be empty", k))
+		case systemGroupAttributes[name]:
+			errs = append(errs, fmt.Errorf("%s: %q is a built-in group attribute that JumpCloud manages itself, "+
+				"so it can't be set as a custom attribute (built-in attributes: %s)",
+				k, name, strings.Join(builtin, ", ")))
+		}
+	}
+	return
 }
 
 // flattenCustomAttributes returns a group's string-valued custom attributes.

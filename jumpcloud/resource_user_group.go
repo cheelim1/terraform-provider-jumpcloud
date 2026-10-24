@@ -56,7 +56,11 @@ func resourceUserGroup() *schema.Resource {
 				Description: "String-valued custom attributes on the group, which members inherit " +
 					"(e.g. for SSO attribute mappings). When set, this is authoritative over the " +
 					"group's string-valued custom attributes; non-string ones set in the console " +
-					"are left untouched.",
+					"are left untouched. Omit it to leave the group's custom attributes unchanged, " +
+					"or set it to an empty map (`{}`) to remove all of the string-valued ones. " +
+					"JumpCloud's built-in attribute names (ldapGroups, posixGroups, radius, " +
+					"sambaEnabled, sudo) can't be used as custom attribute names.",
+				ValidateFunc: validateCustomAttributeKeys,
 			},
 			"members": {
 				Type:             schema.TypeList,

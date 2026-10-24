@@ -139,6 +139,30 @@ func TestFlattenCustomAttributes(t *testing.T) {
 	assert.Equal(t, map[string]interface{}{}, flattenCustomAttributes(nil))
 }
 
+func TestValidateCustomAttributeKeys(t *testing.T) {
+	_, errs := validateCustomAttributeKeys(map[string]interface{}{"snowflakeDefaultRole": "SYSADMIN", "team": "eng"}, "custom_attributes")
+	assert.Empty(t, errs)
+
+	_, errs = validateCustomAttributeKeys(map[string]interface{}{}, "custom_attributes")
+	assert.Empty(t, errs, "an empty map is valid: it clears the string-valued attributes")
+
+	for _, builtin := range []string{"ldapGroups", "posixGroups", "radius", "sambaEnabled", "sudo"} {
+		_, errs = validateCustomAttributeKeys(map[string]interface{}{builtin: "x"}, "custom_attributes")
+		require.Len(t, errs, 1, builtin)
+		assert.Contains(t, errs[0].Error(), `"`+builtin+`" is a built-in group attribute`)
+	}
+
+	_, errs = validateCustomAttributeKeys(map[string]interface{}{"": "x"}, "custom_attributes")
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "must not be empty")
+
+	// Every offending key is reported, in a stable order.
+	_, errs = validateCustomAttributeKeys(map[string]interface{}{"sudo": "x", "radius": "y"}, "custom_attributes")
+	require.Len(t, errs, 2)
+	assert.Contains(t, errs[0].Error(), `"radius"`)
+	assert.Contains(t, errs[1].Error(), `"sudo"`)
+}
+
 func TestResourceUserGroupCreateSendsCustomAttributes(t *testing.T) {
 	var got map[string]interface{}
 	server := userGroupTestServer(t, nil, &got)
