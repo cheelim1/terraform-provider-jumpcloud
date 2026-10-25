@@ -270,15 +270,33 @@ func OrganizationsListRaw(basePath string, headers map[string]string) ([]map[str
 	return jcListRaw(basePath, headers, "/organizations")
 }
 
+// withoutOrgHeader returns a copy of headers without x-org-id. The
+// /organizations/{id} endpoints already name the organization in the path, and
+// JumpCloud rejects a request that selects one a second time via the header
+// ("403 Forbidden: organization selection not allowed via header"). It copies
+// rather than deleting in place because the map is the provider's shared
+// default headers, which every other resource still needs x-org-id from.
+func withoutOrgHeader(headers map[string]string) map[string]string {
+	out := make(map[string]string, len(headers))
+	for k, v := range headers {
+		if !strings.EqualFold(k, "x-org-id") {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // OrganizationGetRaw fetches the full, raw JSON representation of an
-// organization (v1), including its settings object.
+// organization (v1), including its settings object. It never sends x-org-id;
+// see withoutOrgHeader.
 func OrganizationGetRaw(basePath string, headers map[string]string, orgId string) (map[string]interface{}, error) {
-	return jcGetRaw(basePath, headers, "/organizations/"+orgId)
+	return jcGetRaw(basePath, withoutOrgHeader(headers), "/organizations/"+orgId)
 }
 
 // OrganizationUpdateRaw updates an organization (v1) from a raw request body.
+// It never sends x-org-id; see withoutOrgHeader.
 func OrganizationUpdateRaw(basePath string, headers map[string]string, orgId string, body map[string]interface{}) (map[string]interface{}, error) {
-	result, err := jcWriteRaw(http.MethodPut, basePath, headers, "/organizations/"+orgId, body)
+	result, err := jcWriteRaw(http.MethodPut, basePath, withoutOrgHeader(headers), "/organizations/"+orgId, body)
 	if err != nil {
 		return nil, err
 	}
