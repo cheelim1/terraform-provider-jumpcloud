@@ -3,6 +3,8 @@ package jumpcloud
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -63,8 +65,21 @@ func userGroupMembershipImporter(d *schema.ResourceData, m interface{}) ([]*sche
 	return nil, fmt.Errorf("User %s is not a member of group %s", userID, groupID)
 }
 
+// maxGraphPages bounds the graph list pagination loops (100 per page) so an
+// API that ignored skip couldn't loop forever; 100,000 edges is far beyond any
+// real group.
+const maxGraphPages = 1000
+
+// membershipReadRetries/Delay give a just-added membership time to become
+// visible (the graph is eventually consistent) before Create gives up. Vars
+// so tests can shorten them.
+var (
+	membershipReadRetries = 5
+	membershipReadDelay   = time.Second
+)
+
 func checkUserGroupMembership(client *jcapiv2.APIClient, groupID, userID string) (bool, error) {
-	for i := 0; ; i++ {
+	for i := 0; i < maxGraphPages; i++ {
 		optionals := map[string]interface{}{
 			"groupId": groupID,
 			"limit":   int32(100),
@@ -85,15 +100,14 @@ func checkUserGroupMembership(client *jcapiv2.APIClient, groupID, userID string)
 
 		if len(graphconnect) < 100 {
 			break
-		} else {
-			time.Sleep(100 * time.Millisecond)
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	return false, nil
 }
 
 func modifyUserGroupMembership(client *jcapiv2.APIClient,
-	d *schema.ResourceData, action string) error {
+	d *schema.ResourceData, action string) (*http.Response, error) {
 
 	payload := jcapiv2.UserGroupMembersReq{
 		Op:    action,
@@ -105,65 +119,67 @@ func modifyUserGroupMembership(client *jcapiv2.APIClient,
 		"body": payload,
 	}
 
-	_, err := client.UserGroupMembersMembershipApi.GraphUserGroupMembersPost(
+	return client.UserGroupMembersMembershipApi.GraphUserGroupMembersPost(
 		context.TODO(), d.Get("groupid").(string), "", "", req)
-
-	return err
 }
 
 func resourceUserGroupMembershipCreate(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	err := modifyUserGroupMembership(client, d, "add")
-	if err != nil {
+	if _, err := modifyUserGroupMembership(client, d, "add"); err != nil {
 		return err
 	}
+	// The membership exists now: record it, so a failed read-back below can't
+	// leave it in JumpCloud untracked.
+	d.SetId(d.Get("groupid").(string) + "/" + d.Get("userid").(string))
 	return resourceUserGroupMembershipRead(d, m)
 }
 
 func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
+	groupID, userID := d.Get("groupid").(string), d.Get("userid").(string)
 
-	for i := 0; i < 20; i++ { // Prevent infite loop
-
-		optionals := map[string]interface{}{
-			"groupId": d.Get("groupid").(string),
-			"limit":   int32(100),
-			"skip":    int32(i * 100),
-		}
-
-		graphconnect, _, err := client.UserGroupMembersMembershipApi.GraphUserGroupMembersList(
-			context.TODO(), d.Get("groupid").(string), "", "", optionals)
+	attempts := 1
+	if d.IsNewResource() {
+		// Right after Create the new edge may not be listed yet.
+		attempts = membershipReadRetries
+	}
+	for attempt := 1; ; attempt++ {
+		found, err := checkUserGroupMembership(client, groupID, userID)
 		if err != nil {
 			return err
 		}
-
-		// The Userids are hidden in a super-complex construct, see
-		// https://github.com/TheJumpCloud/jcapi-go/blob/master/v2/docs/GraphConnection.md
-		for _, v := range graphconnect {
-			if v.To.Id == d.Get("userid") {
-				// Found - As we not have a JC-ID for the membership we simply store
-				// the concatenation of group ID and user ID as our membership ID
-				d.SetId(d.Get("groupid").(string) + "/" + d.Get("userid").(string))
-				return nil
-			}
+		if found {
+			// As we not have a JC-ID for the membership we simply store
+			// the concatenation of group ID and user ID as our membership ID
+			d.SetId(groupID + "/" + userID)
+			return nil
 		}
-
-		if len(graphconnect) < 100 {
+		if attempt >= attempts {
 			break
-		} else {
-			time.Sleep(100 * time.Millisecond)
 		}
+		time.Sleep(membershipReadDelay)
 	}
 
-	// Instead of unsetting the ID, return an error to let Terraform retry
-	return fmt.Errorf("User ID %s not found in group ID %s", d.Get("userid").(string), d.Get("groupid").(string))
+	if d.IsNewResource() {
+		return fmt.Errorf("User ID %s not found in group ID %s after adding it", userID, groupID)
+	}
+	// Removed outside Terraform (or the user or group was deleted): drop it
+	// from state so the plan re-adds it, instead of failing every refresh.
+	log.Printf("[WARN] user %s is no longer a member of group %s, removing from state", userID, groupID)
+	d.SetId("")
+	return nil
 }
 
 func resourceUserGroupMembershipDelete(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
-	return modifyUserGroupMembership(client, d, "remove")
+	res, err := modifyUserGroupMembership(client, d, "remove")
+	// Already removed (e.g. in the console) is the desired end state.
+	if err != nil && !isNotFound(res, err) {
+		return err
+	}
+	return nil
 }

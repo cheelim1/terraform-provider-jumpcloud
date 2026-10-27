@@ -2,8 +2,6 @@ package jumpcloud
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	jcapiv1 "github.com/TheJumpCloud/jcapi-go/v1"
@@ -34,9 +32,11 @@ func getUserDetails(client *jcapiv1.APIClient, email string) (*jcapiv1.Systemuse
 	contentType := "application/json"
 	accept := "application/json"
 
-	filterJson := fmt.Sprintf("[{\"email\": \"%s\"}]", email)
-	var filter interface{}
-	json.Unmarshal([]byte(filterJson), &filter)
+	// Built with encoding/json, not by string formatting: an email containing
+	// a quote or backslash produced invalid JSON, the unmarshal error was
+	// ignored, and the search then ran with no filter at all -- returning the
+	// first user in the org.
+	var filter interface{} = []map[string]string{{"email": email}}
 
 	optionals := map[string]interface{}{
 		"body": jcapiv1.Search{
@@ -67,15 +67,16 @@ func dataSourceJumpCloudUserRead(d *schema.ResourceData, m interface{}) error {
 
 	// Use the getUserDetails function to query user details using the userEmail
 	user, err := getUserDetails(client, userEmail)
-
-	// If an error occurs or no user is found, return an error
 	if err != nil {
-		return errors.New("user not found")
+		// Returned as is: an auth failure or outage isn't "user not found".
+		return err
 	}
 
 	// Set the user ID in the Terraform resource data object
 	d.SetId(user.Id)
-	d.Set("id", user.Id)
+	if err := d.Set("username", user.Username); err != nil {
+		return err
+	}
 
 	return nil
 }

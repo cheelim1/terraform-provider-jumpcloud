@@ -457,82 +457,98 @@ func getUserGroupMemberIDs(client *jcapiv2.APIClient, groupID string) ([]string,
 	return userIds, nil
 }
 
-func userIDsToEmails(configv2 *jcapiv2.Configuration, userIDs []string) ([]string, error) {
-	emails := make([]string, len(userIDs))
+// listSystemUsers pages through GET /systemusers with the given filter,
+// fields and sort, 100 at a time.
+func listSystemUsers(client *jcapiv1.APIClient, filter, fields, sortBy string) ([]jcapiv1.Systemuserreturn, error) {
+	var out []jcapiv1.Systemuserreturn
+	for i := 0; i < maxGraphPages; i++ {
+		users, res, err := client.SystemusersApi.SystemusersList(context.TODO(), "", "", map[string]interface{}{
+			"filter": filter,
+			"limit":  int32(100),
+			"skip":   int32(i * 100),
+			"fields": fields,
+			"sort":   sortBy,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error listing users (filter %s): %s; response = %+v", filter, err, res)
+		}
+		out = append(out, users.Results...)
+		if len(users.Results) < 100 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return out, nil
+}
 
+// userIDsToEmails maps user ids to their emails. An id with no user (deleted)
+// is skipped rather than returned as an empty email, which would show up as a
+// "" member and a permanent diff.
+func userIDsToEmails(configv2 *jcapiv2.Configuration, userIDs []string) ([]string, error) {
+	emails := []string{}
 	if len(userIDs) == 0 {
 		return emails, nil
 	}
 
-	configv1 := convertV2toV1Config(configv2)
-	client := jcapiv1.NewAPIClient(configv1)
-
-	for i := 0; ; i++ {
-		users, res, err := client.SystemusersApi.SystemusersList(context.TODO(), "", "", map[string]interface{}{
-			"filter": "_id:$in:" + strings.Join(userIDs[:], "|"),
-			"limit":  int32(100),
-			"skip":   int32(i * 100),
-			"fields": "email",
-			"sort":   "email",
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("error loading user emails from IDs: %s, i:%d, error:%s; response:%+v", userIDs, i, err, res)
-		}
-
-		for j, result := range users.Results {
-			emails[j+(i*100)] = result.Email
-		}
-
-		if len(users.Results) < 100 {
-			break
-		} else {
-			time.Sleep(100 * time.Millisecond)
+	client := jcapiv1.NewAPIClient(convertV2toV1Config(configv2))
+	users, err := listSystemUsers(client, "_id:$in:"+strings.Join(userIDs, "|"), "email", "email")
+	if err != nil {
+		return nil, fmt.Errorf("error loading user emails from IDs %s: %s", userIDs, err)
+	}
+	for _, u := range users {
+		if u.Email != "" {
+			emails = append(emails, u.Email)
 		}
 	}
-
 	return emails, nil
 }
 
+// userEmailsToIDs maps member emails to user ids. An email that matches no
+// JumpCloud user is an error naming it; before, it became an empty id that
+// the membership API then rejected with an unhelpful message.
 func userEmailsToIDs(configv2 *jcapiv2.Configuration, userEmailsInterface []interface{}) ([]string, error) {
-	userEmails := make([]string, len(userEmailsInterface))
-	for i, userEmail := range userEmailsInterface {
-		userEmails[i] = userEmail.(string)
+	ids := []string{}
+	unique := []string{}
+	seen := map[string]bool{}
+	for _, e := range userEmailsInterface {
+		email := e.(string)
+		if !seen[strings.ToLower(email)] {
+			seen[strings.ToLower(email)] = true
+			unique = append(unique, email)
+		}
 	}
-
-	ids := make([]string, len(userEmailsInterface))
-
-	if len(userEmails) == 0 {
+	if len(unique) == 0 {
 		return ids, nil
 	}
 
-	configv1 := convertV2toV1Config(configv2)
-	client := jcapiv1.NewAPIClient(configv1)
-
-	for i := 0; ; i++ {
-		users, res, err := client.SystemusersApi.SystemusersList(context.TODO(), "", "", map[string]interface{}{
-			"filter": "email:$in:" + strings.Join(userEmails[:], "|"),
-			"limit":  int32(100),
-			"skip":   int32(i * 100),
-			"fields": "_id",
-			"sort":   "_id",
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("error loading user IDs from emails:%s; response = %+v", err, res)
-		}
-
-		for j, result := range users.Results {
-			ids[j+(i*100)] = result.Id
-		}
-
-		if len(users.Results) < 100 {
-			break
-		} else {
-			time.Sleep(100 * time.Millisecond)
-		}
+	client := jcapiv1.NewAPIClient(convertV2toV1Config(configv2))
+	filter := "email:$in:" + strings.Join(unique, "|")
+	users, err := listSystemUsers(client, filter, "_id", "_id")
+	if err != nil {
+		return nil, fmt.Errorf("error loading user IDs from emails: %s", err)
+	}
+	for _, u := range users {
+		ids = append(ids, u.Id)
 	}
 
+	if len(ids) < len(unique) {
+		// Name the missing ones (a second lookup, only on this error path).
+		found := map[string]bool{}
+		withEmails, err := listSystemUsers(client, filter, "email", "email")
+		if err != nil {
+			return nil, fmt.Errorf("error loading user IDs from emails: %s", err)
+		}
+		for _, u := range withEmails {
+			found[strings.ToLower(u.Email)] = true
+		}
+		var missing []string
+		for _, email := range unique {
+			if !found[strings.ToLower(email)] {
+				missing = append(missing, email)
+			}
+		}
+		return nil, fmt.Errorf("no JumpCloud user found for member email(s): %s", strings.Join(missing, ", "))
+	}
 	return ids, nil
 }
 

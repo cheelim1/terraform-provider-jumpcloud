@@ -3,6 +3,7 @@ package jumpcloud
 import (
 	"context"
 	"fmt"
+	"log"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
@@ -101,6 +102,13 @@ func resourceGroupsSystemRead(d *schema.ResourceData, m interface{}) error {
 
 	group, res, err := client.SystemGroupsApi.GroupsSystemGet(context.TODO(),
 		id, "", headerAccept, nil)
+	if isNotFound(res, err) {
+		// Deleted outside Terraform: drop it from state so the plan re-creates
+		// it, instead of failing every refresh.
+		log.Printf("[WARN] system group %s (%s) not found, removing from state", d.Id(), id)
+		d.SetId("")
+		return nil
+	}
 	if err != nil {
 		// TODO: sort out error essentials
 		return fmt.Errorf("error reading system group ID %s: %s - response = %+v",
@@ -149,7 +157,8 @@ func resourceGroupsSystemDelete(d *schema.ResourceData, m interface{}) error {
 
 	res, err := client.SystemGroupsApi.GroupsSystemDelete(context.TODO(),
 		id, "", headerAccept, nil)
-	if err != nil {
+	// Already deleted (e.g. in the console) is the desired end state.
+	if err != nil && !isNotFound(res, err) {
 		// TODO: sort out error essentials
 		return fmt.Errorf("error deleting system group:%s; response = %+v", err, res)
 	}

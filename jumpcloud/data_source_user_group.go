@@ -38,35 +38,40 @@ func dataSourceJumpCloudUserGroupRead(d *schema.ResourceData, m interface{}) err
 
 	groupName := d.Get("group_name").(string)
 
-	filter := fmt.Sprintf(`{"name":"%s"}`, groupName)
+	// The filter must be a []string ("name:eq:<name>"): the SDK silently drops
+	// any other type, which left this listing unfiltered and, without paging,
+	// limited to the API's first page of groups. Page through the results and
+	// match the name exactly, so a filter mismatch can't pick the wrong group.
+	for i := 0; i < maxGraphPages; i++ {
+		groups, _, err := client.UserGroupsApi.GroupsUserList(context.Background(), "application/json", "application/json", map[string]interface{}{
+			"filter": []string{"name:eq:" + groupName},
+			"limit":  int32(100),
+			"skip":   int32(i * 100),
+		})
+		if err != nil {
+			return err
+		}
 
-	limit := int32(0) // No limit specified to retrieve all matching groups
+		for _, group := range groups {
+			if group.Name == groupName {
+				d.SetId(group.Id)
 
-	groups, _, err := client.UserGroupsApi.GroupsUserList(context.Background(), "application/json", "application/json", map[string]interface{}{
-		"filter": filter,
-		"limit":  limit,
-		"sort":   []string{},
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, group := range groups {
-		if group.Name == groupName {
-			d.SetId(group.Id)
-
-			memberIDs, err := getUserGroupMemberIDs(client, d.Id())
-			if err != nil {
-				return err
+				memberIDs, err := getUserGroupMemberIDs(client, d.Id())
+				if err != nil {
+					return err
+				}
+				memberEmails, err := userIDsToEmails(config, memberIDs)
+				if err != nil {
+					return err
+				}
+				if err := d.Set("members", memberEmails); err != nil {
+					return err
+				}
+				return nil
 			}
-			memberEmails, err := userIDsToEmails(config, memberIDs)
-			if err != nil {
-				return err
-			}
-			if err := d.Set("members", memberEmails); err != nil {
-				return err
-			}
-			return nil
+		}
+		if len(groups) < 100 {
+			break
 		}
 	}
 
