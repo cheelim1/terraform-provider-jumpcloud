@@ -13,4 +13,8 @@ type UserGroup struct {
 	// Display name of a User Group.
 	Name       string                      `json:"name,omitempty"`
 	Attributes jcapiv2.UserGroupAttributes `json:"attributes,omitempty"`
+
+	// RawAttributes is the same attributes object, untyped, so custom
+	// attributes (plain keys jcapi-go's model doesn't know about) survive.
+	RawAttributes map[string]interface{} `json:"-"`
 }

@@ -48,6 +48,20 @@ func resourceUserGroup() *schema.Resource {
 					},
 				},
 			},
+			"custom_attributes": {
+				Type:     schema.TypeMap,
+				Optional: true,
+				Computed: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Description: "String-valued custom attributes on the group, which members inherit " +
+					"(e.g. for SSO attribute mappings). When set, this is authoritative over the " +
+					"group's string-valued custom attributes; non-string ones set in the console " +
+					"are left untouched. Omit it to leave the group's custom attributes unchanged, " +
+					"or set it to an empty map (`{}`) to remove all of the string-valued ones. " +
+					"JumpCloud's built-in attribute names (ldapGroups, posixGroups, radius, " +
+					"sambaEnabled, sudo) can't be used as custom attribute names.",
+				ValidateFunc: validateCustomAttributeKeys,
+			},
 			"members": {
 				Type:             schema.TypeList,
 				Optional:         true,
@@ -69,26 +83,30 @@ func resourceUserGroupCreate(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	body := jcapiv2.UserGroupPost{Name: d.Get("name").(string)}
-
+	// Raw request rather than the SDK: jcapi-go's UserGroupAttributes model has
+	// no room for custom attributes, which live as plain keys on "attributes".
+	attrs := map[string]interface{}{}
 	// For Attributes.PosixGroups, only the first member of the slice
 	// is considered by the JCAPI
 	if attr, ok := expandAttributes(d.Get("attributes")); ok {
-		body.Attributes = attr
+		attrs["posixGroups"] = attr.PosixGroups
 	}
+	applyCustomAttributes(attrs, nil, d.Get("custom_attributes").(map[string]interface{}))
 
-	req := map[string]interface{}{
-		"body": body,
+	body := map[string]interface{}{
+		"name":       d.Get("name").(string),
+		"attributes": attrs,
 	}
-	group, res, err := client.UserGroupsApi.GroupsUserPost(context.TODO(),
-		"", headerAccept, req)
+	group, err := jcWriteRaw(http.MethodPost, config.BasePath, config.DefaultHeader, "/usergroups", body)
 	if err != nil {
-		// TODO: sort out error essentials
-		return fmt.Errorf("error creating user group %s: %s - response = %+v",
-			(req["body"].(jcapiv2.UserGroupPost)).Name, err, res)
+		return fmt.Errorf("error creating user group %s: %s", body["name"], err)
 	}
 
-	d.SetId(group.Id)
+	id, _ := group["id"].(string)
+	if id == "" {
+		return fmt.Errorf("user group %s was created but no id was returned: %+v", body["name"], group)
+	}
+	d.SetId(id)
 
 	memberIds, err := userEmailsToIDs(config, d.Get("members").([]interface{}))
 	if err != nil {
@@ -122,11 +140,18 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 		return nil
 	}
 
-	d.SetId(group.ID)
+	// A successful GET of /usergroups/{id} is that group; don't let a response
+	// that omits the id drop it from state.
+	if group.ID != "" {
+		d.SetId(group.ID)
+	}
 	if err := d.Set("name", group.Name); err != nil {
 		return err
 	}
 	if err := d.Set("attributes", flattenAttributes(&group.Attributes)); err != nil {
+		return err
+	}
+	if err := d.Set("custom_attributes", flattenCustomAttributes(group.RawAttributes)); err != nil {
 		return err
 	}
 
@@ -146,58 +171,66 @@ func resourceUserGroupRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
+// userGroupReadHelper fetches a group through the shared raw helpers, which
+// send every configured default header, bound the request with a timeout, and
+// return an error for any non-2xx response. Only a 404 means the group is gone
+// (ok == false); every other failure -- auth, outage, malformed body -- is an
+// error, so a failed refresh can't be mistaken for an empty or deleted group.
 func userGroupReadHelper(config *jcapiv2.Configuration, id string) (ug *UserGroup,
 	ok bool, err error) {
 
-	req, err := http.NewRequest(http.MethodGet,
-		config.BasePath+"/usergroups/"+id, nil)
+	raw, err := jcGetRaw(config.BasePath, config.DefaultHeader, "/usergroups/"+id)
 	if err != nil {
-		return
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
 
-	req.Header.Add("x-api-key", config.DefaultHeader["x-api-key"])
-	if config.DefaultHeader["x-org-id"] != "" {
-		req.Header.Add("x-org-id", config.DefaultHeader["x-org-id"])
-	}
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
-
-	res, err := http.DefaultClient.Do(req)
+	encoded, err := json.Marshal(raw)
 	if err != nil {
-		return
+		return nil, false, err
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode == http.StatusNotFound {
-		return
+	ug = &UserGroup{}
+	if err := json.Unmarshal(encoded, ug); err != nil {
+		return nil, false, fmt.Errorf("error decoding user group %s: %w", id, err)
 	}
-
-	ok = true
-	err = json.NewDecoder(res.Body).Decode(&ug)
-	return
+	// The typed decode drops custom attributes, which jcapi-go's model doesn't
+	// know about; keep the untyped attributes object too.
+	ug.RawAttributes, _ = raw["attributes"].(map[string]interface{})
+	return ug, true, nil
 }
 
 func resourceUserGroupUpdate(d *schema.ResourceData, m interface{}) error {
 	config := m.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	body := jcapiv2.UserGroupPost{Name: d.Get("name").(string)}
-	if attr, ok := expandAttributes(d.Get("attributes")); ok {
-		body.Attributes = attr
-	} else {
-		return errors.New("unable to update, attributes not expandable")
+	// JumpCloud's PATCH /usergroups/{id} behaves like a PUT: confirmed live, it
+	// clears any top-level field (e.g. description) or attributes key (e.g. a
+	// custom attribute) the request omits. So start from the group's full
+	// current state and change only the fields this resource manages.
+	body, err := jcGetRaw(config.BasePath, config.DefaultHeader, "/usergroups/"+d.Id())
+	if err != nil {
+		return fmt.Errorf("error reading user group %s before update: %s", d.Id(), err)
+	}
+	for _, k := range []string{"id", "type", "organizationObjectId", "memberQueryErrorFlags", "suggestionCounts"} {
+		delete(body, k)
 	}
 
-	req := map[string]interface{}{
-		"body": body,
+	body["name"] = d.Get("name").(string)
+
+	attrs, ok := body["attributes"].(map[string]interface{})
+	if !ok {
+		attrs = map[string]interface{}{}
+		body["attributes"] = attrs
 	}
-	// behaves like PUT, will fail if
-	// attributes.posixGroups isn't sent, see GODOC
-	_, res, err := client.UserGroupsApi.GroupsUserPatch(context.TODO(),
-		d.Id(), "", headerAccept, req)
-	if err != nil {
-		// TODO: sort out error essentials
-		return fmt.Errorf("error deleting user group:%s; response = %+v", err, res)
+	// posix_groups is ForceNew, so it never changes here; whatever the server
+	// has is carried over by the read-modify-write.
+	oldCustom, newCustom := d.GetChange("custom_attributes")
+	applyCustomAttributes(attrs, oldCustom.(map[string]interface{}), newCustom.(map[string]interface{}))
+
+	if _, err := jcWriteRaw(http.MethodPatch, config.BasePath, config.DefaultHeader, "/usergroups/"+d.Id(), body); err != nil {
+		return fmt.Errorf("error updating user group %s: %s", d.Id(), err)
 	}
 
 	oldMemberIDs, err := getUserGroupMemberIDs(client, d.Id())
@@ -239,7 +272,9 @@ func resourceUserGroupDelete(d *schema.ResourceData, m interface{}) error {
 
 	res, err := client.UserGroupsApi.GroupsUserDelete(context.TODO(),
 		d.Id(), "", headerAccept, nil)
-	if err != nil {
+	// A group that's already gone (e.g. deleted in the console) is the desired
+	// end state, so don't fail destroy -- or block it forever -- over a 404.
+	if err != nil && !isNotFound(res, err) {
 		// TODO: sort out error essentials
 		return fmt.Errorf("error deleting user group:%s; response = %+v", err, res)
 	}
