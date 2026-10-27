@@ -62,9 +62,11 @@ func resourceApplication() *schema.Resource {
 				Required:    true,
 			},
 			"learn_more": {
-				Description: "",
-				Type:        schema.TypeString,
-				Optional:    true,
+				Description: "The application's \"learn more\" link. Omit it to leave the " +
+					"value set in JumpCloud unchanged.",
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
 			},
 			"constant_attributes": {
 				Description: "",
@@ -267,10 +269,10 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 			return err
 		}
 	}
-	if v, ok := raw["learnMore"].(string); ok {
-		if err := d.Set("learn_more", v); err != nil {
-			return err
-		}
+	// Always set (absent -> ""), so a configured value JumpCloud doesn't have
+	// shows up as a change and gets sent.
+	if err := d.Set("learn_more", stringOr(raw["learnMore"], "")); err != nil {
+		return err
 	}
 	if v, ok := raw["ssoUrl"].(string); ok {
 		if err := d.Set("sso_url", v); err != nil {
@@ -427,6 +429,11 @@ func buildApplicationRequestBody(seed map[string]interface{}, d *schema.Resource
 	}
 	if manages("active") {
 		body["active"] = d.Get("active").(bool)
+	}
+	// learn_more was never sent before (the request builders had no field
+	// for it), so a configured value silently did nothing.
+	if manages("learn_more") {
+		body["learnMore"] = d.Get("learn_more").(string)
 	}
 
 	cfg, ok := body["config"].(map[string]interface{})
