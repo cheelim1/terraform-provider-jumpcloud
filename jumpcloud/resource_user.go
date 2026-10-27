@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
@@ -13,12 +15,31 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
+// userKeep is appended to the description of every user attribute that is
+// Optional+Computed: omitting it leaves JumpCloud's value alone.
+const userKeep = " Omit it to leave the value set in JumpCloud unchanged."
+
 func resourceUser() *schema.Resource {
+	optionalComputedBool := func(desc string) *schema.Schema {
+		return &schema.Schema{Type: schema.TypeBool, Optional: true, Computed: true, Description: desc + userKeep}
+	}
+	optionalComputedString := func(desc string) *schema.Schema {
+		return &schema.Schema{Type: schema.TypeString, Optional: true, Computed: true, Description: desc + userKeep}
+	}
 	return &schema.Resource{
 		Create: resourceUserCreate,
 		Read:   resourceUserRead,
 		Update: resourceUserUpdate,
 		Delete: resourceUserDelete,
+		// Every attribute other than username, email and password is
+		// Optional+Computed and only written when the configuration sets or
+		// changes it. Before, they were plain Optional, but the SDK request
+		// struct tags each field omitempty, so false and "" were never sent:
+		// an omitted attribute showed a permanent diff (e.g. suspended
+		// true -> false on a user suspended in the console) that apply never
+		// carried out. Now that false and "" can be sent, keeping those
+		// semantics would make that apply unsuspend the user; Computed makes
+		// an omitted attribute mean "leave as is" instead.
 		Schema: map[string]*schema.Schema{
 			"username": {
 				Type:     schema.TypeString,
@@ -28,49 +49,29 @@ func resourceUser() *schema.Resource {
 				Type:     schema.TypeString,
 				Required: true,
 			},
-			"firstname": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"lastname": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"display_name": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
+			"firstname":    optionalComputedString("The user's first name. Example: `john`."),
+			"lastname":     optionalComputedString("The user's last name. Example: `doe`."),
+			"display_name": optionalComputedString("The user's display name. Example: `john doe`."),
 			"password": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Description: "The user's password. Only sent to JumpCloud on create and when it " +
+					"changes in the configuration; never read back. Removing it from the " +
+					"configuration doesn't clear the password.",
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
-			"enable_mfa": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"ldap_binding_user": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"passwordless_sudo": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"password_never_expires": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"sudo": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"suspended": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
+			"enable_mfa":             optionalComputedBool("Require Multi-factor Authentication on the User Portal."),
+			"ldap_binding_user":      optionalComputedBool("Allow the user to bind to JumpCloud LDAP."),
+			"passwordless_sudo":      optionalComputedBool("Allow sudo without a password (requires sudo)."),
+			"password_never_expires": optionalComputedBool("Exempt the user's password from expiry."),
+			"sudo":                   optionalComputedBool("Grant sudo on the user's systems."),
+			"suspended":              optionalComputedBool("Suspend the user."),
 			"phone_number": {
+				Description: "The user's phone numbers. Once set, the configured list replaces " +
+					"the existing one." + userKeep,
 				Type:     schema.TypeList,
 				Optional: true,
+				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"number": {
@@ -137,6 +138,7 @@ func resourceUserCreate(d *schema.ResourceData, m interface{}) error {
 		EnableUserPortalMultifactor: d.Get("enable_mfa").(bool),
 		LdapBindingUser:             d.Get("ldap_binding_user").(bool),
 		Sudo:                        d.Get("sudo").(bool),
+		PasswordlessSudo:            d.Get("passwordless_sudo").(bool),
 		Suspended:                   d.Get("suspended").(bool),
 		PasswordNeverExpires:        d.Get("password_never_expires").(bool),
 		PhoneNumbers:                phoneNumbers,
@@ -157,13 +159,15 @@ func resourceUserRead(d *schema.ResourceData, m interface{}) error {
 	configv1 := convertV2toV1Config(m.(*jcapiv2.Configuration))
 	client := jcapiv1.NewAPIClient(configv1)
 
-	res, _, err := client.SystemusersApi.SystemusersGet(context.TODO(),
+	res, httpRes, err := client.SystemusersApi.SystemusersGet(context.TODO(),
 		d.Id(), "", "", nil)
 
-	// If the object does not exist in our infrastructure, we unset the ID
-	// Unfortunately, the http request returns 200 even if the resource does not exist
+	// A user deleted outside Terraform answers 404 (historically also an empty
+	// 200, surfacing as EOF): drop it from state so the plan re-creates it,
+	// rather than failing every refresh.
 	if err != nil {
-		if err.Error() == "EOF" {
+		if isNotFound(httpRes, err) {
+			log.Printf("[WARN] user %s not found, removing from state", d.Id())
 			d.SetId("")
 			return nil
 		}
@@ -199,6 +203,9 @@ func resourceUserRead(d *schema.ResourceData, m interface{}) error {
 	if err := d.Set("sudo", res.Sudo); err != nil {
 		return err
 	}
+	if err := d.Set("passwordless_sudo", res.PasswordlessSudo); err != nil {
+		return err
+	}
 	if err := d.Set("suspended", res.Suspended); err != nil {
 		return err
 	}
@@ -211,60 +218,71 @@ func resourceUserRead(d *schema.ResourceData, m interface{}) error {
 
 func resourceUserUpdate(d *schema.ResourceData, m interface{}) error {
 	configv1 := convertV2toV1Config(m.(*jcapiv2.Configuration))
-	client := jcapiv1.NewAPIClient(configv1)
 
-	var phoneNumbers []jcapiv1.SystemuserputPhoneNumbers
-	phoneNumbersRaw, _ := json.Marshal(expandPhoneNumbers(d.Get("phone_number").([]interface{})))
-	if err := json.Unmarshal(phoneNumbersRaw, &phoneNumbers); err != nil {
-		return err
+	// A raw partial PUT of only the attributes that changed. The SDK's
+	// Systemuserput tags every field omitempty, so false and "" could never be
+	// sent through it (and it has no passwordless_sudo at all).
+	// PUT /systemusers/{id} leaves omitted fields unchanged -- the provider has
+	// always relied on that, since the SDK body never carried them.
+	body := userUpdateBody(d)
+	if len(body) == 0 {
+		return resourceUserRead(d, m)
 	}
-
-	payload := jcapiv1.Systemuserput{
-		Username:                    d.Get("username").(string),
-		Email:                       d.Get("email").(string),
-		Firstname:                   d.Get("firstname").(string),
-		Lastname:                    d.Get("lastname").(string),
-		Password:                    d.Get("password").(string),
-		EnableUserPortalMultifactor: d.Get("enable_mfa").(bool),
-		LdapBindingUser:             d.Get("ldap_binding_user").(bool),
-		Sudo:                        d.Get("sudo").(bool),
-		Suspended:                   d.Get("suspended").(bool),
-		PasswordNeverExpires:        d.Get("password_never_expires").(bool),
-		PhoneNumbers:                phoneNumbers,
-	}
-
-	// Dynamically set the display name if there's a change
-	if d.HasChange("display_name") {
-		_, ok := d.GetOk("display_name")
-		if !ok {
-			// The attribute was removed from the configuration, so we explicitly clear it.
-			payload.Displayname = ""
-		} else {
-			// The attribute has a new value.
-			payload.Displayname = d.Get("display_name").(string)
-		}
-	}
-
-	req := map[string]interface{}{
-		"body": payload,
-	}
-	_, _, err := client.SystemusersApi.SystemusersPut(context.TODO(),
-		d.Id(), "", "", req)
-	if err != nil {
-		return err
+	if _, err := jcWriteRaw(http.MethodPut, configv1.BasePath, configv1.DefaultHeader, "/systemusers/"+d.Id(), body); err != nil {
+		return fmt.Errorf("error updating user %s: %s", d.Id(), err)
 	}
 	return resourceUserRead(d, m)
+}
+
+// userUpdateBody returns the changed attributes as a PUT /systemusers body.
+func userUpdateBody(d *schema.ResourceData) map[string]interface{} {
+	body := map[string]interface{}{}
+	fields := map[string]string{
+		"username":               "username",
+		"email":                  "email",
+		"firstname":              "firstname",
+		"lastname":               "lastname",
+		"display_name":           "displayname",
+		"enable_mfa":             "enable_user_portal_multifactor",
+		"ldap_binding_user":      "ldap_binding_user",
+		"passwordless_sudo":      "passwordless_sudo",
+		"password_never_expires": "password_never_expires",
+		"sudo":                   "sudo",
+		"suspended":              "suspended",
+	}
+	for attr, key := range fields {
+		if d.HasChange(attr) {
+			body[key] = d.Get(attr)
+		}
+	}
+	// Only a new, non-empty password is sent: re-sending the current one on
+	// every update re-submits it as a password change (which a password-history
+	// policy can reject), and removing it from config isn't a request to clear it.
+	if d.HasChange("password") {
+		if pw := d.Get("password").(string); pw != "" {
+			body["password"] = pw
+		}
+	}
+	if d.HasChange("phone_number") {
+		phones := []map[string]string{}
+		for _, p := range expandPhoneNumbers(d.Get("phone_number").([]interface{})) {
+			phones = append(phones, p)
+		}
+		body["phoneNumbers"] = phones
+	}
+	return body
 }
 
 func resourceUserDelete(d *schema.ResourceData, m interface{}) error {
 	configv1 := convertV2toV1Config(m.(*jcapiv2.Configuration))
 	client := jcapiv1.NewAPIClient(configv1)
 
-	res, _, err := client.SystemusersApi.SystemusersDelete(context.TODO(),
+	_, httpRes, err := client.SystemusersApi.SystemusersDelete(context.TODO(),
 		d.Id(), "", headerAccept, nil)
-	if err != nil {
-		// TODO: sort out error essentials
-		return fmt.Errorf("error deleting user group:%s; response = %+v", err, res)
+	// A user that's already gone (e.g. deleted in the console) is the desired
+	// end state, so don't fail -- or block -- destroy over a 404.
+	if err != nil && !isNotFound(httpRes, err) {
+		return fmt.Errorf("error deleting user %s: %s", d.Id(), err)
 	}
 	d.SetId("")
 	return nil
