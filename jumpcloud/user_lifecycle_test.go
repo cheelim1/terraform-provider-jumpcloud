@@ -68,6 +68,7 @@ func TestUserFlagsCanBeTurnedOff(t *testing.T) {
 				Config: userConfig(off),
 				Check: resource.ComposeTestCheckFunc(
 					wantUserField(f, "sudo", false), wantUserField(f, "suspended", false),
+					wantUserField(f, "state", "ACTIVATED"),
 					wantUserField(f, "enable_user_portal_multifactor", false),
 					wantUserField(f, "ldap_binding_user", false), wantUserField(f, "password_never_expires", false),
 					wantUserField(f, "passwordless_sudo", false),
@@ -75,7 +76,8 @@ func TestUserFlagsCanBeTurnedOff(t *testing.T) {
 			},
 			{ // and back on again
 				Config: userConfig(on),
-				Check:  resource.ComposeTestCheckFunc(wantUserField(f, "sudo", true), wantUserField(f, "passwordless_sudo", true)),
+				Check: resource.ComposeTestCheckFunc(wantUserField(f, "sudo", true), wantUserField(f, "passwordless_sudo", true),
+					wantUserField(f, "suspended", true), wantUserField(f, "state", "SUSPENDED")),
 			},
 		},
 	})

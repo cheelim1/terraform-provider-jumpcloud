@@ -255,6 +255,17 @@ func userUpdateBody(d *schema.ResourceData) map[string]interface{} {
 			body[key] = d.Get(attr)
 		}
 	}
+	// JumpCloud now tracks suspension in "state" (ACTIVATED/SUSPENDED) as well
+	// as the older "suspended" boolean. Send both, consistently -- as
+	// JumpCloud's own Set-JCUser does -- so the change sticks whichever one
+	// the API treats as authoritative.
+	if d.HasChange("suspended") {
+		if d.Get("suspended").(bool) {
+			body["state"] = "SUSPENDED"
+		} else {
+			body["state"] = "ACTIVATED"
+		}
+	}
 	// Only a new, non-empty password is sent: re-sending the current one on
 	// every update re-submits it as a password change (which a password-history
 	// policy can reject), and removing it from config isn't a request to clear it.
