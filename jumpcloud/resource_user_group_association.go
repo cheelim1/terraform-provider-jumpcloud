@@ -3,7 +3,9 @@ package jumpcloud
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
@@ -64,6 +66,13 @@ func resourceUserGroupAssociation() *schema.Resource {
 }
 
 func modifyUserGroupAssociation(client *jcapiv2.APIClient, d *schema.ResourceData, action string) diag.Diagnostics {
+	_, err := postUserGroupAssociation(client, d, action)
+	return diag.FromErr(err)
+}
+
+// postUserGroupAssociation adds or removes the association, returning the HTTP
+// response so callers can tell a 404 apart from other failures.
+func postUserGroupAssociation(client *jcapiv2.APIClient, d *schema.ResourceData, action string) (*http.Response, error) {
 	payload := jcapiv2.UserGroupGraphManagementReq{
 		Op:    action,
 		Type_: d.Get("type").(string),
@@ -74,10 +83,8 @@ func modifyUserGroupAssociation(client *jcapiv2.APIClient, d *schema.ResourceDat
 		"body": payload,
 	}
 
-	_, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsPost(
+	return client.UserGroupAssociationsApi.GraphUserGroupAssociationsPost(
 		context.TODO(), d.Get("group_id").(string), "", "", req)
-
-	return diag.FromErr(err)
 }
 
 func resourceUserGroupAssociationCreate(d *schema.ResourceData, meta interface{}) error {
@@ -104,40 +111,73 @@ func resourceUserGroupAssociationRead(d *schema.ResourceData, meta interface{}) 
 	objectID := d.Get("object_id").(string)
 	objectType := d.Get("type").(string)
 
-	// Prepare optional parameters for the API call
-	optionals := map[string]interface{}{
-		"groupId": groupID,
-		"limit":   int32(100),
+	attempts := 1
+	if d.IsNewResource() {
+		// Right after Create the new edge may not be listed yet.
+		attempts = newEdgeReadRetries
 	}
-
-	// Fetch associations for the group
-	graphConnect, _, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsList(
-		context.TODO(), groupID, "", "", []string{objectType}, optionals)
-	if err != nil {
-		return err
-	}
-
-	// Check if the specified association exists
-	for _, v := range graphConnect {
-		if v.To.Id == objectID {
-			// Resource exists
+	for attempt := 1; ; attempt++ {
+		found, err := userGroupAssociationExists(client, groupID, objectID, objectType)
+		if err != nil {
+			return err
+		}
+		if found {
 			d.SetId(fmt.Sprintf("%s/%s/%s", groupID, objectID, objectType))
 			return nil
 		}
+		if attempt >= attempts {
+			break
+		}
+		time.Sleep(newEdgeReadDelay)
 	}
 
-	// If the association does not exist, unset ID to signal resource removal
+	if d.IsNewResource() {
+		return fmt.Errorf("association of %s %s with user group %s not found after adding it", objectType, objectID, groupID)
+	}
+	// Removed outside Terraform (or the group was deleted): unset the ID so
+	// the plan re-adds it.
 	d.SetId("")
 	return nil
+}
+
+// userGroupAssociationExists pages through every association of objectType:
+// one beyond the first page (100) must still be found, or it would be planned
+// for re-adding forever. A group that no longer exists has none.
+func userGroupAssociationExists(client *jcapiv2.APIClient, groupID, objectID, objectType string) (bool, error) {
+	for i := 0; i < maxGraphPages; i++ {
+		optionals := map[string]interface{}{
+			"groupId": groupID,
+			"limit":   int32(100),
+			"skip":    int32(i * 100),
+		}
+		graphConnect, res, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsList(
+			context.TODO(), groupID, "", "", []string{objectType}, optionals)
+		if isNotFound(res, err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, v := range graphConnect {
+			if v.To.Id == objectID {
+				return true, nil
+			}
+		}
+		if len(graphConnect) < 100 {
+			break
+		}
+	}
+	return false, nil
 }
 
 func resourceUserGroupAssociationDelete(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*jcapiv2.Configuration)
 	client := jcapiv2.NewAPIClient(config)
 
-	diags := modifyUserGroupAssociation(client, d, "remove")
-	if diags.HasError() {
-		return fmt.Errorf("Error deleting user group association: %v", diags)
+	res, err := postUserGroupAssociation(client, d, "remove")
+	// Already removed (e.g. in the console) is the desired end state.
+	if err != nil && !isNotFound(res, err) {
+		return fmt.Errorf("Error deleting user group association: %v", err)
 	}
 	return nil
 }

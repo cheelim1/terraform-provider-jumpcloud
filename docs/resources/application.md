@@ -61,7 +61,7 @@ resource "jumpcloud_application" "example" {
 - `idp_certificate` (String, Sensitive) Leave unset to have JumpCloud generate and manage its own signing certificate -- confirmed against the live API as the correct way to use this resource; a self-supplied certificate is stored as an opaque string and causes the metadata-XML endpoint to fail with a 500 for every request. Set only if you specifically need to supply your own IdP keypair instead.
 - `idp_private_key` (String, Sensitive) Leave unset -- see idp_certificate. Never refreshed by Read even if set: the API always returns this field empty regardless of what's stored.
 - `include_groups` (Boolean) Include the user's JumpCloud group memberships as a SAML attribute, named by groups_attribute_name. Omit it to leave whatever is configured in JumpCloud unchanged.
-- `learn_more` (String)
+- `learn_more` (String) The application's "learn more" link. Omit it to leave the value set in JumpCloud unchanged. Setting it to an empty string has no effect; clear it in the JumpCloud console.
 - `sign_assertion` (Boolean) Sign the SAML assertion (JumpCloud's default for new SAML applications is true). Omit it to leave whatever is configured in JumpCloud unchanged.
 - `sign_response` (Boolean) Sign the SAML response. Omit it to leave whatever is configured in JumpCloud unchanged.
 

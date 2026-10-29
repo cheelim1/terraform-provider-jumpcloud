@@ -37,17 +37,17 @@ output "userid" {
 
 ### Optional
 
-- `enable_mfa` (Boolean) Require Multi-factor Authentication on the User Portal.
-- `firstname` (String) The user's first name. Example: `john`.
-- `lastname` (String) The user's last name. Example: `doe`.
-- `display_name` (String) The user's display name. Example: `john doe`.
-- `ldap_binding_user` (Boolean)
-- `password` (String)
-- `password_never_expires` (Boolean)
-- `passwordless_sudo` (Boolean)
-- `phone_number` (Block List) (see [below for nested schema](#nestedblock--phone_number))
-- `sudo` (Boolean)
-- `suspended` (Boolean)
+- `display_name` (String) The user's display name. Example: `john doe`. Setting it to an empty string has no effect; clear it in the JumpCloud console. Omit it to leave the value set in JumpCloud unchanged.
+- `enable_mfa` (Boolean) Require Multi-factor Authentication on the User Portal. Omit it to leave the value set in JumpCloud unchanged.
+- `firstname` (String) The user's first name. Example: `john`. Setting it to an empty string has no effect; clear it in the JumpCloud console. Omit it to leave the value set in JumpCloud unchanged.
+- `lastname` (String) The user's last name. Example: `doe`. Setting it to an empty string has no effect; clear it in the JumpCloud console. Omit it to leave the value set in JumpCloud unchanged.
+- `ldap_binding_user` (Boolean) Allow the user to bind to JumpCloud LDAP. Omit it to leave the value set in JumpCloud unchanged.
+- `password` (String, Sensitive) The user's password. Only sent to JumpCloud on create and when it changes in the configuration; never read back. Removing it from the configuration doesn't clear the password.
+- `password_never_expires` (Boolean) Exempt the user's password from expiry. Omit it to leave the value set in JumpCloud unchanged.
+- `passwordless_sudo` (Boolean) Allow sudo without a password (requires sudo). Omit it to leave the value set in JumpCloud unchanged.
+- `phone_number` (Block List) The user's phone numbers. Once set, the configured list replaces the existing one. Omit it to leave the value set in JumpCloud unchanged. Removing every phone_number block therefore leaves the existing numbers in place; delete them in the JumpCloud console. (see [below for nested schema](#nestedblock--phone_number))
+- `sudo` (Boolean) Grant sudo on the user's systems. Omit it to leave the value set in JumpCloud unchanged.
+- `suspended` (Boolean) Suspend the user. Omit it to leave the value set in JumpCloud unchanged.
 
 ### Read-Only
 
