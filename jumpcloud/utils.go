@@ -368,8 +368,10 @@ func discoverSingletonConfigId(config *jcapiv2.Configuration, path, name string,
 
 // Gets an application's metadata XML for SAML authentication
 // this direct API call is a needed workaround since JumpCloud does not offer this endpoint through its SDK
-func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string) (string, error) {
-	url := "https://console.jumpcloud.com/api/organizations/" + orgId + "/applications/" + applicationId + "/metadata.xml"
+// basePathV1 is the v1 API base path (e.g. https://console.jumpcloud.com/api,
+// what convertV2toV1Config derives from the provider's configuration).
+func GetApplicationMetadataXml(basePathV1, orgId string, applicationId string, apiKey string) (string, error) {
+	url := applicationMetadataXmlURL(basePathV1, orgId, applicationId)
 
 	// Debug logging is deliberately off: resty's debug output includes request headers,
 	// which would write the x-api-key to the TF_LOG output.
@@ -393,6 +395,15 @@ func GetApplicationMetadataXml(orgId string, applicationId string, apiKey string
 	}
 
 	return string(resp.Body()), nil
+}
+
+// applicationMetadataXmlURL is the SAML metadata URL for an application. It's
+// built from the configured base path rather than a hard-coded host, so it
+// follows the provider's configuration (and tests' fake servers); with the
+// default configuration it is exactly
+// https://console.jumpcloud.com/api/organizations/{org}/applications/{id}/metadata.xml.
+func applicationMetadataXmlURL(basePathV1, orgId, applicationId string) string {
+	return basePathV1 + "/organizations/" + orgId + "/applications/" + applicationId + "/metadata.xml"
 }
 
 // stringOr returns v as a string, or def when v is absent, null, or not a string.

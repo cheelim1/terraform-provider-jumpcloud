@@ -310,3 +310,28 @@ func TestConvertV2toV1ConfigBasePath(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:54321", v1config.BasePath,
 		"a BasePath with no /v2 suffix (e.g. a test server) must pass through unchanged")
 }
+
+// The metadata URL now comes from the configured base path; with the
+// provider's real configuration it must be byte-for-byte the URL that was
+// previously hard-coded.
+func TestApplicationMetadataXmlURLUnchangedInProduction(t *testing.T) {
+	for _, orgID := range []string{"", "5f1e2d3c4b5a69788796a5b4"} {
+		c, _ := (&Config{APIKey: "k", OrgID: orgID}).Client()
+		configv1 := convertV2toV1Config(c.(*jcapiv2.Configuration))
+		got := applicationMetadataXmlURL(configv1.BasePath, configv1.DefaultHeader["x-org-id"], "app123")
+		want := "https://console.jumpcloud.com/api/organizations/" + orgID + "/applications/app123/metadata.xml"
+		if got != want {
+			t.Fatalf("metadata URL changed:\n got  %s\n want %s", got, want)
+		}
+	}
+}
+
+// The provider's shared v2 configuration must carry its HTTP client from the
+// start, so jcapiv2.NewAPIClient never writes to it from concurrent resource
+// operations (a data race under Terraform's parallelism).
+func TestProviderConfigHasHTTPClient(t *testing.T) {
+	c, _ := (&Config{APIKey: "k"}).Client()
+	if c.(*jcapiv2.Configuration).HTTPClient != http.DefaultClient {
+		t.Fatal("HTTPClient must be set to http.DefaultClient by Config.Client")
+	}
+}

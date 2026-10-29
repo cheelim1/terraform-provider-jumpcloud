@@ -29,6 +29,7 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        # Hermetic: acceptance tests (TestAcc*) skip without TF_ACC, so no
-        # JumpCloud credentials are needed.
+        # Acceptance tests (TestAcc*) skip without TF_ACC, and every other
+        # test runs against local fake servers, so no JumpCloud credentials or
+        # network access to JumpCloud are needed.
         run: go test -race -count=1 ./...

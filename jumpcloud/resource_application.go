@@ -341,7 +341,7 @@ func resourceApplicationRead(d *schema.ResourceData, meta interface{}) error {
 		log.Println("[INFO] response ID is ", id)
 		orgId := configv1.DefaultHeader["x-org-id"]
 
-		metadataXml, err := GetApplicationMetadataXml(orgId, id, apiKey)
+		metadataXml, err := GetApplicationMetadataXml(configv1.BasePath, orgId, id, apiKey)
 		if err != nil {
 			// org_id is optional, but the metadata URL is scoped to an organization. Without it
 			// the fetch can fail on every refresh, so warn instead of failing Read; otherwise
