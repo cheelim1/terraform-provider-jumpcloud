@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	jcapiv2 "github.com/TheJumpCloud/jcapi-go/v2"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
@@ -110,33 +111,63 @@ func resourceUserGroupAssociationRead(d *schema.ResourceData, meta interface{}) 
 	objectID := d.Get("object_id").(string)
 	objectType := d.Get("type").(string)
 
-	// Page through every association of this type: one beyond the first page
-	// (100) must still be found, or it would be planned for re-adding forever.
+	attempts := 1
+	if d.IsNewResource() {
+		// Right after Create the new edge may not be listed yet.
+		attempts = newEdgeReadRetries
+	}
+	for attempt := 1; ; attempt++ {
+		found, err := userGroupAssociationExists(client, groupID, objectID, objectType)
+		if err != nil {
+			return err
+		}
+		if found {
+			d.SetId(fmt.Sprintf("%s/%s/%s", groupID, objectID, objectType))
+			return nil
+		}
+		if attempt >= attempts {
+			break
+		}
+		time.Sleep(newEdgeReadDelay)
+	}
+
+	if d.IsNewResource() {
+		return fmt.Errorf("association of %s %s with user group %s not found after adding it", objectType, objectID, groupID)
+	}
+	// Removed outside Terraform (or the group was deleted): unset the ID so
+	// the plan re-adds it.
+	d.SetId("")
+	return nil
+}
+
+// userGroupAssociationExists pages through every association of objectType:
+// one beyond the first page (100) must still be found, or it would be planned
+// for re-adding forever. A group that no longer exists has none.
+func userGroupAssociationExists(client *jcapiv2.APIClient, groupID, objectID, objectType string) (bool, error) {
 	for i := 0; i < maxGraphPages; i++ {
 		optionals := map[string]interface{}{
 			"groupId": groupID,
 			"limit":   int32(100),
 			"skip":    int32(i * 100),
 		}
-		graphConnect, _, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsList(
+		graphConnect, res, err := client.UserGroupAssociationsApi.GraphUserGroupAssociationsList(
 			context.TODO(), groupID, "", "", []string{objectType}, optionals)
+		if isNotFound(res, err) {
+			return false, nil
+		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		for _, v := range graphConnect {
 			if v.To.Id == objectID {
-				d.SetId(fmt.Sprintf("%s/%s/%s", groupID, objectID, objectType))
-				return nil
+				return true, nil
 			}
 		}
 		if len(graphConnect) < 100 {
 			break
 		}
 	}
-
-	// If the association does not exist, unset ID to signal resource removal
-	d.SetId("")
-	return nil
+	return false, nil
 }
 
 func resourceUserGroupAssociationDelete(d *schema.ResourceData, meta interface{}) error {

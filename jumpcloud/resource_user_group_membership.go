@@ -70,12 +70,12 @@ func userGroupMembershipImporter(d *schema.ResourceData, m interface{}) ([]*sche
 // real group.
 const maxGraphPages = 1000
 
-// membershipReadRetries/Delay give a just-added membership time to become
-// visible (the graph is eventually consistent) before Create gives up. Vars
-// so tests can shorten them.
+// newEdgeReadRetries/Delay give a just-added membership or association time
+// to become visible (the graph is eventually consistent) before Create gives
+// up. Vars so tests can shorten them.
 var (
-	membershipReadRetries = 5
-	membershipReadDelay   = time.Second
+	newEdgeReadRetries = 5
+	newEdgeReadDelay   = time.Second
 )
 
 func checkUserGroupMembership(client *jcapiv2.APIClient, groupID, userID string) (bool, error) {
@@ -86,8 +86,13 @@ func checkUserGroupMembership(client *jcapiv2.APIClient, groupID, userID string)
 			"skip":    int32(i * 100),
 		}
 
-		graphconnect, _, err := client.UserGroupMembersMembershipApi.GraphUserGroupMembersList(
+		graphconnect, res, err := client.UserGroupMembersMembershipApi.GraphUserGroupMembersList(
 			context.TODO(), groupID, "", "", optionals)
+		if isNotFound(res, err) {
+			// The group itself is gone (deleted outside Terraform), so the
+			// user isn't a member of it.
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -144,7 +149,7 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 	attempts := 1
 	if d.IsNewResource() {
 		// Right after Create the new edge may not be listed yet.
-		attempts = membershipReadRetries
+		attempts = newEdgeReadRetries
 	}
 	for attempt := 1; ; attempt++ {
 		found, err := checkUserGroupMembership(client, groupID, userID)
@@ -160,7 +165,7 @@ func resourceUserGroupMembershipRead(d *schema.ResourceData, m interface{}) erro
 		if attempt >= attempts {
 			break
 		}
-		time.Sleep(membershipReadDelay)
+		time.Sleep(newEdgeReadDelay)
 	}
 
 	if d.IsNewResource() {

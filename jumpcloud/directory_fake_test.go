@@ -41,15 +41,36 @@ type fakeDirectory struct {
 	userGroups   []map[string]interface{} // for GET /v2/usergroups
 	systemGroups map[string]map[string]interface{}
 	nextID       int
+
+	// deletedGroups answer 404 on their members/associations lists, as a
+	// group deleted in the console would.
+	deletedGroups map[string]bool
+	// hideNewEdgeReads, when > 0, keeps a just-added member or association
+	// out of the next N list responses (eventual consistency).
+	hideNewEdgeReads int
+	hidden           map[string]int // "group/id" -> remaining hidden reads
+	deletes          int            // DELETE requests and graph "remove" ops served
 }
 
 func newFakeDirectory() *fakeDirectory {
 	return &fakeDirectory{
-		users:        map[string]map[string]interface{}{},
-		members:      map[string][]string{},
-		assocs:       map[string][]fakeEdge{},
-		systemGroups: map[string]map[string]interface{}{},
+		users:         map[string]map[string]interface{}{},
+		members:       map[string][]string{},
+		assocs:        map[string][]fakeEdge{},
+		systemGroups:  map[string]map[string]interface{}{},
+		deletedGroups: map[string]bool{},
+		hidden:        map[string]int{},
 	}
+}
+
+// visible reports whether edge key should be listed now, counting down any
+// remaining hidden reads.
+func (f *fakeDirectory) visible(key string) bool {
+	if n := f.hidden[key]; n > 0 {
+		f.hidden[key] = n - 1
+		return false
+	}
+	return true
 }
 
 func (f *fakeDirectory) newID(prefix string) string {
@@ -107,6 +128,9 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(seg) == 2 && seg[0] == "systemusers":
 		u, ok := f.users[seg[1]]
 		if !ok {
+			if r.Method == http.MethodDelete {
+				f.deletes++
+			}
 			notFound(w)
 			return
 		}
@@ -120,6 +144,7 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = enc.Encode(u)
 		case http.MethodDelete:
+			f.deletes++
 			delete(f.users, seg[1])
 			_ = enc.Encode(u)
 		}
@@ -142,6 +167,36 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]interface{}{"totalCount": len(results), "results": results})
 
 	// ---- v2 user groups
+	case p == "/v2/usergroups" && r.Method == http.MethodPost:
+		g := deepCopyJSON(body)
+		g["id"] = f.newID("ug")
+		g["type"] = "user_group"
+		f.userGroups = append(f.userGroups, g)
+		_ = enc.Encode(g)
+	case len(seg) == 3 && seg[0] == "v2" && seg[1] == "usergroups":
+		idx := -1
+		for i, g := range f.userGroups {
+			if g["id"] == seg[2] {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			notFound(w)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = enc.Encode(f.userGroups[idx])
+		case http.MethodPatch: // behaves like PUT, as the real endpoint does
+			g := deepCopyJSON(body)
+			g["id"], g["type"] = seg[2], "user_group"
+			f.userGroups[idx] = g
+			_ = enc.Encode(g)
+		case http.MethodDelete:
+			f.deletes++
+			f.userGroups = append(f.userGroups[:idx], f.userGroups[idx+1:]...)
+			w.WriteHeader(http.StatusNoContent)
+		}
 	case p == "/v2/usergroups" && r.Method == http.MethodGet:
 		groups := f.userGroups
 		for _, flt := range r.URL.Query()["filter"] {
@@ -159,11 +214,21 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(page(groups, limit, skip))
 	case len(seg) == 4 && seg[0] == "v2" && seg[1] == "usergroups" && seg[3] == "members":
 		gid := seg[2]
+		if f.deletedGroups[gid] {
+			notFound(w)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			limit, skip := pageParams(r)
+			var listed []string
+			for _, uid := range f.members[gid] {
+				if f.visible(gid + "/" + uid) {
+					listed = append(listed, uid)
+				}
+			}
 			out := []interface{}{}
-			for _, uid := range page(f.members[gid], limit, skip) {
+			for _, uid := range page(listed, limit, skip) {
 				out = append(out, map[string]interface{}{"to": map[string]interface{}{"id": uid, "type": "user"}})
 			}
 			_ = enc.Encode(out)
@@ -176,7 +241,11 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				f.members[gid] = append(f.members[gid], uid)
+				if f.hideNewEdgeReads > 0 {
+					f.hidden[gid+"/"+uid] = f.hideNewEdgeReads
+				}
 			} else {
+				f.deletes++
 				idx := indexOf(f.members[gid], uid)
 				if idx < 0 {
 					notFound(w)
@@ -188,12 +257,16 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case len(seg) == 4 && seg[0] == "v2" && seg[1] == "usergroups" && seg[3] == "associations":
 		gid := seg[2]
+		if f.deletedGroups[gid] {
+			notFound(w)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			targets := strings.Split(r.URL.Query().Get("targets"), ",")
 			var matched []fakeEdge
 			for _, e := range f.assocs[gid] {
-				if stringInSlice(e.typ, targets) {
+				if stringInSlice(e.typ, targets) && f.visible(gid+"/"+e.id) {
 					matched = append(matched, e)
 				}
 			}
@@ -207,7 +280,11 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			e := fakeEdge{id: body["id"].(string), typ: body["type"].(string)}
 			if body["op"] == "add" {
 				f.assocs[gid] = append(f.assocs[gid], e)
+				if f.hideNewEdgeReads > 0 {
+					f.hidden[gid+"/"+e.id] = f.hideNewEdgeReads
+				}
 			} else {
+				f.deletes++
 				found := false
 				for i, x := range f.assocs[gid] {
 					if x == e {
@@ -243,6 +320,9 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(seg) == 3 && seg[0] == "v2" && seg[1] == "systemgroups":
 		g, ok := f.systemGroups[seg[2]]
 		if !ok {
+			if r.Method == http.MethodDelete {
+				f.deletes++
+			}
 			notFound(w)
 			return
 		}
@@ -253,6 +333,7 @@ func (f *fakeDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			g["name"] = body["name"]
 			_ = enc.Encode(g)
 		case http.MethodDelete:
+			f.deletes++
 			delete(f.systemGroups, seg[2])
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -335,6 +416,7 @@ func directoryTestProviders(url string) map[string]terraform.ResourceProvider {
 
 func directoryTestMeta(url string) *jcapiv2.Configuration {
 	c := jcapiv2.NewConfiguration()
+	c.HTTPClient = http.DefaultClient // as Config.Client does; see there
 	c.BasePath = url + "/v2"
 	c.AddDefaultHeader("x-api-key", "k")
 	return c
