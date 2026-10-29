@@ -19,6 +19,10 @@ import (
 // Optional+Computed: omitting it leaves JumpCloud's value alone.
 const userKeep = " Omit it to leave the value set in JumpCloud unchanged."
 
+// userNoClear documents that an Optional+Computed string can't be emptied
+// from configuration: SDK v1 treats "" as unset for it.
+const userNoClear = " Setting it to an empty string has no effect; clear it in the JumpCloud console."
+
 func resourceUser() *schema.Resource {
 	optionalComputedBool := func(desc string) *schema.Schema {
 		return &schema.Schema{Type: schema.TypeBool, Optional: true, Computed: true, Description: desc + userKeep}
@@ -34,12 +38,14 @@ func resourceUser() *schema.Resource {
 		// Every attribute other than username, email and password is
 		// Optional+Computed and only written when the configuration sets or
 		// changes it. Before, they were plain Optional, but the SDK request
-		// struct tags each field omitempty, so false and "" were never sent:
-		// an omitted attribute showed a permanent diff (e.g. suspended
-		// true -> false on a user suspended in the console) that apply never
-		// carried out. Now that false and "" can be sent, keeping those
-		// semantics would make that apply unsuspend the user; Computed makes
-		// an omitted attribute mean "leave as is" instead.
+		// struct tags each field omitempty, so false was never sent: an
+		// omitted bool showed a permanent diff (e.g. suspended true -> false
+		// on a user suspended in the console) that apply never carried out.
+		// Now that false is sent, keeping those semantics would make that
+		// apply unsuspend the user; Computed makes an omitted attribute mean
+		// "leave as is" instead. (SDK v1 treats "" as unset for a Computed
+		// string, so names can't be cleared from configuration -- they
+		// couldn't before either, the empty string was dropped by omitempty.)
 		Schema: map[string]*schema.Schema{
 			"username": {
 				Type:     schema.TypeString,
@@ -49,9 +55,9 @@ func resourceUser() *schema.Resource {
 				Type:     schema.TypeString,
 				Required: true,
 			},
-			"firstname":    optionalComputedString("The user's first name. Example: `john`."),
-			"lastname":     optionalComputedString("The user's last name. Example: `doe`."),
-			"display_name": optionalComputedString("The user's display name. Example: `john doe`."),
+			"firstname":    optionalComputedString("The user's first name. Example: `john`." + userNoClear),
+			"lastname":     optionalComputedString("The user's last name. Example: `doe`." + userNoClear),
+			"display_name": optionalComputedString("The user's display name. Example: `john doe`." + userNoClear),
 			"password": {
 				Description: "The user's password. Only sent to JumpCloud on create and when it " +
 					"changes in the configuration; never read back. Removing it from the " +
@@ -68,7 +74,9 @@ func resourceUser() *schema.Resource {
 			"suspended":              optionalComputedBool("Suspend the user."),
 			"phone_number": {
 				Description: "The user's phone numbers. Once set, the configured list replaces " +
-					"the existing one." + userKeep,
+					"the existing one." + userKeep + " Removing every phone_number block " +
+					"therefore leaves the existing numbers in place; delete them in the " +
+					"JumpCloud console.",
 				Type:     schema.TypeList,
 				Optional: true,
 				Computed: true,

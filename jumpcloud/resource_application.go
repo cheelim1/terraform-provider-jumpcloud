@@ -63,7 +63,8 @@ func resourceApplication() *schema.Resource {
 			},
 			"learn_more": {
 				Description: "The application's \"learn more\" link. Omit it to leave the " +
-					"value set in JumpCloud unchanged.",
+					"value set in JumpCloud unchanged. Setting it to an empty string has no " +
+					"effect; clear it in the JumpCloud console.",
 				Type:     schema.TypeString,
 				Optional: true,
 				Computed: true,
