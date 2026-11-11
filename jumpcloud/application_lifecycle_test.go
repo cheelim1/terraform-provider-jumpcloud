@@ -40,6 +40,9 @@ type fakeApplications struct {
 	apps   map[string]map[string]interface{}
 	bodies []map[string]interface{} // every POST/PUT body received
 	nextID int
+	// dropOnStore lists request fields the real API accepts on a write but does
+	// not keep or return (e.g. a bookmark's isBookmark).
+	dropOnStore []string
 }
 
 func (f *fakeApplications) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +56,9 @@ func (f *fakeApplications) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/applications":
 		f.bodies = append(f.bodies, deepCopyJSON(body))
 		f.nextID++
+		for _, k := range f.dropOnStore {
+			delete(body, k)
+		}
 		body["_id"] = fmt.Sprintf("app%d", f.nextID)
 		f.apps[body["_id"].(string)] = body
 		_ = json.NewEncoder(w).Encode(body)
@@ -60,6 +66,9 @@ func (f *fakeApplications) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.apps[id])
 	case r.Method == http.MethodPut && f.apps[id] != nil:
 		f.bodies = append(f.bodies, deepCopyJSON(body))
+		for _, k := range f.dropOnStore {
+			delete(body, k)
+		}
 		body["_id"] = id
 		f.apps[id] = body
 		_ = json.NewEncoder(w).Encode(body)

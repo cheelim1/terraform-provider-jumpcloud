@@ -26,6 +26,7 @@ func Provider() *schema.Provider {
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"jumpcloud_application":            resourceApplication(),
+			"jumpcloud_bookmark_application":   resourceBookmarkApplication(),
 			"jumpcloud_user":                   resourceUser(),
 			"jumpcloud_user_group":             resourceUserGroup(),
 			"jumpcloud_user_group_membership":  resourceUserGroupMembership(),
