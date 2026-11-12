@@ -42,7 +42,7 @@ resource "jumpcloud_user_group_association" "wiki" {
 ### Optional
 
 - `active` (Boolean) Whether the bookmark is shown to the users it is assigned to. Defaults to `true`.
-- `color` (String) Hex colour of the bookmark's tile, for example `#006CAC`. Omit it to use JumpCloud's default colour.
+- `color` (String) Hex colour of the bookmark's tile, for example `#006CAC`. Omit it (an empty string counts as omitted) to use JumpCloud's default colour on create and to keep the current colour on update.
 - `description` (String) Description of the bookmark.
 
 ### Read-Only

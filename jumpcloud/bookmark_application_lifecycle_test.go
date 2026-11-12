@@ -161,6 +161,93 @@ func TestBookmarkApplicationImportRejectsNonBookmark(t *testing.T) {
 	})
 }
 
+// A GET that omits description (it was cleared outside Terraform) must read
+// back as an empty description, so the change is reported as drift and
+// corrected, not left as the stale value in state.
+func TestBookmarkApplicationClearedDescriptionIsDrift(t *testing.T) {
+	t.Setenv("JUMPCLOUD_API_KEY", "k")
+	t.Setenv("JUMPCLOUD_ORG_ID", "")
+	f := &fakeApplications{apps: map[string]map[string]interface{}{}, dropOnStore: []string{"isBookmark"}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+
+	cfg := fmt.Sprintf(bookmarkConfig, "B", "https://example.com/", "keep me", "true")
+	resource.UnitTest(t, resource.TestCase{
+		Providers: applicationTestProviders(srv.URL),
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig: func() {
+					f.mu.Lock()
+					for _, a := range f.apps {
+						delete(a, "description")
+					}
+					f.mu.Unlock()
+				},
+				Config:             cfg,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+			{
+				// And the next apply puts it back.
+				Config: cfg,
+				Check: func(*terraform.State) error {
+					if got := f.app()["description"]; got != "keep me" {
+						return fmt.Errorf("description not restored: %v", got)
+					}
+					return nil
+				},
+			},
+		},
+	})
+}
+
+// color is optional+computed, so an explicit empty string is treated as
+// omitted: create uses JumpCloud's default colour, an update keeps the current
+// one, and neither leaves a diff behind. (Rejecting "" at validation would
+// break `color = var.color` with an empty default for no benefit.) Each step
+// also gets the harness's automatic empty-plan check after apply.
+func TestBookmarkApplicationEmptyColorIsTreatedAsOmitted(t *testing.T) {
+	t.Setenv("JUMPCLOUD_API_KEY", "k")
+	t.Setenv("JUMPCLOUD_ORG_ID", "")
+	f := &fakeApplications{apps: map[string]map[string]interface{}{}, dropOnStore: []string{"isBookmark"}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+
+	cfg := func(color string) string {
+		return fmt.Sprintf(`
+provider "jumpcloud" { api_key = "k" }
+resource "jumpcloud_bookmark_application" "b" {
+  display_label = "B"
+  url           = "https://example.com/"
+  color         = "%s"
+}
+`, color)
+	}
+	const addr = "jumpcloud_bookmark_application.b"
+	resource.UnitTest(t, resource.TestCase{
+		Providers: applicationTestProviders(srv.URL),
+		Steps: []resource.TestStep{
+			{Config: cfg(""), Check: resource.TestCheckResourceAttr(addr, "color", "#006CAC")},
+			{Config: cfg(""), PlanOnly: true},
+			{Config: cfg("#112233"), Check: resource.TestCheckResourceAttr(addr, "color", "#112233")},
+			{
+				// Back to "": the colour set above is kept, with no diff.
+				Config: cfg(""),
+				Check: resource.ComposeTestCheckFunc(
+					func(*terraform.State) error {
+						if got := f.app()["color"]; got != "#112233" {
+							return fmt.Errorf("an empty color changed the colour to %v", got)
+						}
+						return nil
+					},
+					resource.TestCheckResourceAttr(addr, "color", "#112233"),
+				),
+			},
+		},
+	})
+}
+
 // A bookmark deleted in the console is recreated rather than failing the refresh.
 func TestBookmarkApplicationDeletedOutOfBandIsRecreated(t *testing.T) {
 	t.Setenv("JUMPCLOUD_API_KEY", "k")

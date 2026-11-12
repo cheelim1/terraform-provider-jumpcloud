@@ -44,7 +44,8 @@ func resourceBookmarkApplication() *schema.Resource {
 			},
 			"color": {
 				Description: "Hex colour of the bookmark's tile, for example `#006CAC`. " +
-					"Omit it to use JumpCloud's default colour.",
+					"Omit it (an empty string counts as omitted) to use JumpCloud's default colour " +
+					"on create and to keep the current colour on update.",
 				Type:     schema.TypeString,
 				Optional: true,
 				Computed: true,
@@ -113,10 +114,12 @@ func resourceBookmarkApplicationRead(d *schema.ResourceData, meta interface{}) e
 			return err
 		}
 	}
-	if v, ok := raw["description"].(string); ok {
-		if err := d.Set("description", v); err != nil {
-			return err
-		}
+	// Always set, "" when the response has no description: if it was cleared
+	// outside Terraform, the stale value must not stay in state (that would hide
+	// the drift and send it back on the next update).
+	description, _ := raw["description"].(string)
+	if err := d.Set("description", description); err != nil {
+		return err
 	}
 	if v, ok := raw["active"].(bool); ok {
 		if err := d.Set("active", v); err != nil {
