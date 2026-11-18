@@ -32,6 +32,7 @@ func Provider() *schema.Provider {
 			"jumpcloud_user_group_membership":  resourceUserGroupMembership(),
 			"jumpcloud_system_group":           resourceGroupsSystem(),
 			"jumpcloud_user_group_association": resourceUserGroupAssociation(),
+			"jumpcloud_scim_attribute_mapping": resourceScimAttributeMapping(),
 			"jumpcloud_organization_settings":  resourceOrganizationSettings(),
 
 			// JumpCloud's MFA model spans three layers, each covered by its own
